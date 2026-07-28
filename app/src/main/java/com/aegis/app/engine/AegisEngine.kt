@@ -3,6 +3,7 @@ package com.aegis.app.engine
 import android.content.Context
 import com.aegis.app.data.AegisStore
 import com.aegis.app.notify.PartnerNotifier
+import com.aegis.app.service.CriticalPackages
 import com.aegis.core.budget.BudgetKeys
 import com.aegis.core.budget.BudgetTracker
 import com.aegis.core.budget.GraceClaimResult
@@ -29,8 +30,11 @@ import com.aegis.core.util.Urls
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -82,6 +86,22 @@ class AegisEngine private constructor(context: Context) {
     private val _onboardingComplete = MutableStateFlow(false)
     val onboardingComplete: StateFlow<Boolean> = _onboardingComplete.asStateFlow()
 
+    /**
+     * One-shot messages for the UI: what just happened to a change the user made.
+     *
+     * `extraBufferCapacity` so `tryEmit` from inside the write lock never suspends or
+     * drops — this must not be able to deadlock the thing it is reporting on.
+     */
+    private val _notices = MutableSharedFlow<ChangeNotice>(extraBufferCapacity = 8)
+    val notices: SharedFlow<ChangeNotice> = _notices.asSharedFlow()
+
+    /** True while the user is still setting up and edits apply instantly. */
+    val isArmed: Boolean get() = _rules.value.armed
+
+    /** Queued changes waiting on a particular control, for inline display. */
+    fun pendingFor(targetKey: String): PendingChange? =
+        _pending.value.firstOrNull { targetKey in it.targetKeys }
+
     /** Rebuilt whenever corrections change, so learning takes effect without a restart. */
     @Volatile
     private var classifier: LexicalClassifier = LexicalClassifier(clock = clock)
@@ -130,8 +150,22 @@ class AegisEngine private constructor(context: Context) {
         return EvaluatedPage(entryId, classification, decision)
     }
 
+    /**
+     * Apps that can never be blocked — the launcher, Settings, the dialer, Aegis itself.
+     * Resolved from the platform and refreshed when the guard connects, since the user
+     * can install a new launcher at any time.
+     */
+    @Volatile
+    private var criticalPackages: Set<String> = setOf(appContext.packageName)
+
+    fun refreshCriticalPackages() {
+        criticalPackages = CriticalPackages.resolve(appContext)
+    }
+
+    fun isCritical(packageName: String): Boolean = packageName in criticalPackages
+
     fun evaluateApp(packageName: String): Decision =
-        rulesEngine.evaluateApp(packageName, _rules.value, _usage.value)
+        rulesEngine.evaluateApp(packageName, _rules.value, _usage.value, criticalPackages)
 
     fun effectiveMode(category: Category) = rulesEngine.effectiveMode(category, _rules.value)
 
@@ -188,9 +222,20 @@ class AegisEngine private constructor(context: Context) {
         store.saveRules(outcome.appliedNow)
 
         outcome.queued?.let { queued ->
-            val updated = _pending.value + queued
+            // enqueue, not plain append: one control, one queued change.
+            val updated = coolingOff.enqueue(_pending.value, queued)
             _pending.value = updated
             store.savePending(updated)
+
+            // The tap appeared to do nothing. Say why, immediately — a control that
+            // silently refuses to move is the single fastest way to lose a user's trust
+            // in a tool whose whole job is refusing things.
+            _notices.tryEmit(
+                ChangeNotice.Deferred(
+                    summary = queued.summary,
+                    minutesRemaining = coolingOff.minutesRemaining(queued),
+                ),
+            )
 
             // §3.7: weakening a rule is exactly the moment a partner should hear about it.
             current.partner?.let { partner ->
@@ -209,6 +254,10 @@ class AegisEngine private constructor(context: Context) {
         _pending.value = result.stillPending
         store.saveRules(result.rules)
         store.savePending(result.stillPending)
+
+        for (change in result.applied) {
+            _notices.tryEmit(ChangeNotice.Applied(change.summary))
+        }
         result.applied
     }
 
@@ -302,3 +351,12 @@ data class EvaluatedPage(
     val classification: Classification,
     val decision: Decision,
 )
+
+/** Something the user did that needs saying out loud. */
+sealed interface ChangeNotice {
+    /** The edit was held back by the cooling-off period. */
+    data class Deferred(val summary: String, val minutesRemaining: Int) : ChangeNotice
+
+    /** A change that had been waiting has now landed. */
+    data class Applied(val summary: String) : ChangeNotice
+}

@@ -26,7 +26,8 @@ browse never leaves the phone — see [Privacy](#privacy) for what that means co
 | **App blocking & budgets** | Block an app, cap it at 30 minutes a day, or share one "Social" hour across several. |
 | **Grace tap** | Out of time? You can have five more minutes — after sixty seconds of sitting and waiting for them. |
 | **No side doors** | "Never reach facebook.com" is enforced across the Aegis browser, other browsers' address bars, in-app webviews, link previews and DNS — not just the app you deleted. |
-| **Cooling-off** | Strengthening a rule applies instantly. Weakening one waits 24 hours. Including the setting that controls the wait. |
+| **Setup mode** | Nothing binds you until you tap **Lock in my rules**. Until then every change is instant, so the app can actually be configured. |
+| **Cooling-off** | Once locked in: strengthening a rule applies instantly, weakening one waits 24 hours. Including unlocking, and including the setting that controls the wait. |
 | **Accountability partner** | Optionally tell someone when you try to weaken your own rules. |
 | **Transparency log** | Every block, with its evidence, and a one-tap "this was wrong" that actually retrains the local model. |
 
@@ -145,6 +146,27 @@ loosening parts queue. This is why bundling "turn off the adult filter" together
 "block gambling" does not get the first one through faster. `CoolingOffTest` is written as
 a series of attacks on this rather than demonstrations of it — including winding the system
 clock forward, rebooting, and setting the cooling-off period to zero.
+
+Two refinements that came out of actually using it:
+
+*You cannot bind yourself to rules you have not written yet.* The first build armed the
+lock from launch, so the first edit to any setting silently queued for 24 hours and the app
+could not be configured at all. Setup mode fixes it: changes are instant until you lock in.
+That is not a loophole — the unarmed state is only reachable on a fresh install, which
+already wipes every rule, so it grants nothing that uninstalling did not.
+
+*A control that refuses to move has to say why.* A deferred change used to leave the chip
+springing back with no explanation, which is indistinguishable from a bug. Now the edit
+raises a snackbar, the affected control shows what is waiting and offers to cancel it, and
+a second edit to the same control supersedes the first rather than stacking a contradictory
+queue — without restarting the clock, so fiddling cannot extend a wait forever.
+
+**Nothing can block the launcher, Settings, the dialer, or Aegis itself.** A focus session
+blocks every app not on its allow list and cannot be ended early, which taken literally
+meant a phone with no reachable home screen and no way to get to the switch that turns
+Aegis off. `CriticalPackages` resolves those from the platform at runtime — hard-coding
+them would fail on exactly the devices it was never tested on. A self-control tool is
+allowed to be difficult; it is not allowed to brick the device or prevent its own removal.
 
 **The accountability partner has no backend.** The concept called for a server; a server
 that receives a message every time someone tries to weaken their porn filter would be a

@@ -83,8 +83,14 @@ fun SettingsScreen() {
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "Currently ${rules.coolingOffHours}h. Making this longer applies now; " +
-                        "making it shorter has to sit through the current ${rules.coolingOffHours}h first.",
+                    text = if (!rules.armed) {
+                        "Currently ${rules.coolingOffHours}h, but nothing is locked yet — every " +
+                            "change still applies immediately. This starts biting when you lock " +
+                            "your rules in from the Home screen."
+                    } else {
+                        "Currently ${rules.coolingOffHours}h. Making this longer applies now; " +
+                            "making it shorter has to sit through the current ${rules.coolingOffHours}h first."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

@@ -199,6 +199,21 @@ data class RuleSet(
     val profiles: List<Profile> = emptyList(),
     val focusSession: FocusSession? = null,
     val partner: AccountabilityPartner? = null,
+    /**
+     * Whether the self-binding lock is live.
+     *
+     * You cannot bind yourself to rules you have not written yet. While this is false,
+     * Aegis is in setup: every edit applies immediately, so the app can actually be
+     * configured. Arming it turns on §3.6 for good — from then on, weakening anything
+     * waits out the cooling-off period, *including turning this back off*.
+     *
+     * This is not a loophole. The unarmed state is only reachable on a fresh install,
+     * and a fresh install already wipes every rule, budget and queued change — so it
+     * grants nothing that uninstalling did not already grant. What it buys is the
+     * difference between a tool you can set up and one that locks you out of its own
+     * settings screen the first time you touch it.
+     */
+    val armed: Boolean = false,
     /** How long a loosening change waits before it takes effect (§3.6). */
     val coolingOffHours: Int = DEFAULT_COOLING_OFF_HOURS,
     /** Seconds a grace tap must sit through before it grants more time (§3.4). */

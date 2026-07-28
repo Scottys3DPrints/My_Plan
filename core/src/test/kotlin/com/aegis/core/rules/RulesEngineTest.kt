@@ -323,6 +323,49 @@ class RulesEngineTest {
     }
 
     @Test
+    fun `a focus session never blocks the launcher or Settings`() {
+        // Without this the phone has no reachable home screen for the whole session, and
+        // a focus session cannot be ended early. That is a bricked device, not self-control.
+        val clock = clockAt(10)
+        val engine = RulesEngine(clock)
+        val critical = setOf("com.android.launcher", "com.android.settings")
+        val rules = RuleSet.defaults().copy(
+            focusSession = FocusSession(
+                startedAtMillis = clock.nowMillis() - 60_000,
+                endsAtMillis = clock.nowMillis() + 3_600_000,
+                label = "Deep work",
+            ),
+        )
+
+        assertEquals(
+            Outcome.ALLOW,
+            engine.evaluateApp("com.android.launcher", rules, UsageState(), critical).outcome,
+        )
+        assertEquals(
+            Outcome.ALLOW,
+            engine.evaluateApp("com.android.settings", rules, UsageState(), critical).outcome,
+        )
+        assertEquals(
+            Outcome.BLOCK,
+            engine.evaluateApp("com.example.game", rules, UsageState(), critical).outcome,
+            "everything else is still blocked",
+        )
+    }
+
+    @Test
+    fun `an exempt app cannot be blocked even by an explicit rule`() {
+        val engine = RulesEngine(clockAt(10))
+        val rules = RuleSet.defaults().withAppRule(
+            AppRule("com.android.settings", "Settings", blocked = true),
+        )
+
+        assertEquals(
+            Outcome.ALLOW,
+            engine.evaluateApp("com.android.settings", rules, UsageState(), setOf("com.android.settings")).outcome,
+        )
+    }
+
+    @Test
     fun `an empty classification against an unlisted host is simply allowed`() {
         val engine = RulesEngine(clockAt(10))
         val decision = engine.evaluateHost(

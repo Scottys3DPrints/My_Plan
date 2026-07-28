@@ -18,6 +18,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -32,6 +33,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aegis.app.engine.AegisEngine
+import com.aegis.app.service.CriticalPackages
 import com.aegis.app.ui.components.AegisCard
 import com.aegis.app.ui.components.Explanation
 import com.aegis.app.ui.components.SectionHeader
@@ -56,11 +58,17 @@ fun AppsScreen() {
     val scope = rememberCoroutineScope()
     val rules by engine.rules.collectAsState()
     val usage by engine.usage.collectAsState()
+    val pending by engine.pending.collectAsState()
 
     var query by remember { mutableStateOf("") }
 
     val installed by produceState(initialValue = emptyList<InstalledApp>()) {
-        value = withContext(Dispatchers.IO) { loadLaunchableApps(context) }
+        val critical = withContext(Dispatchers.IO) { CriticalPackages.resolve(context) }
+        // Hidden rather than shown-and-ignored: offering a Block switch that silently
+        // does nothing is worse than not offering it.
+        value = withContext(Dispatchers.IO) {
+            loadLaunchableApps(context).filterNot { it.packageName in critical }
+        }
     }
 
     val visible = remember(installed, query) {
@@ -97,6 +105,7 @@ fun AppsScreen() {
         items(visible, key = { it.packageName }) { app ->
             val rule = rules.ruleFor(app.packageName) ?: AppRule(app.packageName, app.label)
             val spent = usage.packageMinutes(app.packageName)
+            val waiting = pending.firstOrNull { "app:${app.packageName}" in it.targetKeys }
 
             AegisCard {
                 Row(
@@ -123,6 +132,19 @@ fun AppsScreen() {
                             }
                         },
                     )
+                }
+
+                if (waiting != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Waiting: ${waiting.summary} — in " +
+                            LocalTime.formatDuration(engine.minutesRemaining(waiting)) + ".",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    TextButton(onClick = { scope.launch { engine.cancelPending(waiting.id) } }) {
+                        Text("Cancel that change")
+                    }
                 }
 
                 if (!rule.blocked) {

@@ -79,12 +79,23 @@ fun HomeScreen(
     }
 
     // Both permissions live outside the app, so poll while this screen is visible rather
-    // than trusting a value captured once.
+    // than trusting a value captured once. Assigning an unchanged value is a no-op in
+    // Compose, so this does not cause a recomposition every 1.5 seconds.
     LaunchedEffect(Unit) {
         while (true) {
             filterRunning = AegisVpnService.isRunning
             guardEnabled = AegisAccessibilityService.isEnabled(context)
             delay(1_500)
+        }
+    }
+
+    // A countdown that does not count down reads as a frozen screen. Half-minute ticks
+    // are enough for a display measured in minutes and hours.
+    var tick by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000)
+            tick++
         }
     }
 
@@ -177,6 +188,58 @@ fun HomeScreen(
             }
         }
 
+        item {
+            SectionHeader(
+                title = if (rules.armed) "Locked in" else "Setup",
+                subtitle = if (rules.armed) {
+                    "Weakening a rule now waits ${rules.coolingOffHours}h. Strengthening one is instant."
+                } else {
+                    "Changes apply immediately while you set things up."
+                },
+            )
+        }
+
+        item {
+            AegisCard(highlighted = !rules.armed) {
+                if (rules.armed) {
+                    Text("Your rules are locked.", fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "Making anything stricter still happens at once. Anything that " +
+                            "loosens a rule — including unlocking — joins the queue below.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    TextButton(onClick = {
+                        scope.launch { engine.submitRuleChange(rules.copy(armed = false)) }
+                    }) {
+                        Text("Unlock (waits ${rules.coolingOffHours}h)")
+                    }
+                } else {
+                    Text("Set your rules first.", fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "Nothing is holding you to anything yet — change whatever you like " +
+                            "and it takes effect straight away. When the rules look right, lock " +
+                            "them in. After that, loosening one costs you a ${rules.coolingOffHours}-hour wait, " +
+                            "which is the entire point.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            scope.launch { engine.submitRuleChange(rules.copy(armed = true)) }
+                        },
+                    ) {
+                        Text("Lock in my rules")
+                    }
+                }
+            }
+        }
+
         if (pending.isNotEmpty()) {
             item {
                 SectionHeader(
@@ -188,8 +251,9 @@ fun HomeScreen(
                 AegisCard(highlighted = true) {
                     Text(change.summary, fontWeight = FontWeight.Medium)
                     Spacer(Modifier.height(4.dp))
+                    val remaining = remember(tick, change.id) { engine.minutesRemaining(change) }
                     Text(
-                        text = "In ${LocalTime.formatDuration(engine.minutesRemaining(change))}.",
+                        text = "In ${LocalTime.formatDuration(remaining)}.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Spacer(Modifier.height(8.dp))

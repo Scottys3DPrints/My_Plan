@@ -92,7 +92,29 @@ time budgets. Aegis works without it.
 
 ---
 
-## 4. Updating later
+## 4. Set your rules, then lock them
+
+Aegis starts in **setup mode**: every change applies immediately. Configure categories,
+apps, budgets and destinations until they look right.
+
+When you're happy, tap **Lock in my rules** on the Home screen. From then on:
+
+- Making anything **stricter** still happens instantly.
+- Making anything **looser** — including unlocking again — waits out the cooling-off
+  period, 24 hours by default. The queued change appears under **Waiting** on the Home
+  screen with a countdown, and you can cancel it at any time.
+
+If you tap a control after locking and it springs back to its old value, that is the
+cooling-off period doing its job, not a bug. A message tells you what is queued and when
+it lands, and the control itself shows the same thing with a Cancel button.
+
+Editing the same control again replaces the queued change rather than adding a second one
+— and it does **not** restart the countdown, so changing your mind is free but waiting is
+still waiting.
+
+---
+
+## 5. Updating later
 
 Android installs an update over an existing app **only if both are signed by the same
 key**.
@@ -145,6 +167,11 @@ old one first.
 **The accessibility toggle is greyed out.** Do step 1 above — *Allow restricted settings*.
 
 **The filter switch turns itself off.** Another VPN is active. Only one can run at a time.
+
+**I changed a setting and now I can't change it back.** You've locked your rules in.
+Loosening waits out the cooling-off period — check **Waiting** on the Home screen, where
+you can cancel the queued change or see when it lands. If you want to edit freely again,
+**Unlock** on the Home screen, which itself waits the same period.
 
 **Some sites still load.** Expected, and worth understanding rather than treating as a
 bug. The network filter reads DNS. An app using its own encrypted resolver

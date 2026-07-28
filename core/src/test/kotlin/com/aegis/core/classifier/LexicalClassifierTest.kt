@@ -79,6 +79,14 @@ class LexicalClassifierTest {
     }
 
     @Test
+    fun `a single-letter hostname label does not flag every CDN as social`() {
+        // With Social on a timed budget, a false positive here blocks unrelated content
+        // hosts every evening, which reads as "the internet is broken".
+        val result = classifier.classify(ContentInput(url = "https://cdn-x.example.com/asset.js"))
+        assertEquals(0f, result.score(Category.SOCIAL))
+    }
+
+    @Test
     fun `catches a hostname even with no page text at all`() {
         // This is the only signal the network filter gets through TLS.
         val result = classifier.classify(ContentInput(url = "https://pornhub.example/"))

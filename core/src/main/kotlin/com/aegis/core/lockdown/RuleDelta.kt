@@ -42,6 +42,16 @@ sealed interface RuleDelta {
     /** One line, in the user's terms. Shown in the pending queue and to a partner. */
     val summary: String
 
+    /**
+     * What this change is *about* — one category, one app, one destination.
+     *
+     * Two things depend on it. A newly queued change supersedes any pending change with
+     * the same key, so tapping a control four times leaves one entry in the queue rather
+     * than four contradictory ones. And a screen can ask "is something already waiting
+     * for this control?" and say so next to it, instead of appearing to ignore the tap.
+     */
+    val targetKey: String
+
     fun applyTo(rules: RuleSet): RuleSet
 
     @Serializable
@@ -52,6 +62,8 @@ sealed interface RuleDelta {
     ) : RuleDelta {
         override val direction: ChangeDirection
             get() = compare(before?.strictness ?: 0, after?.strictness ?: 0)
+
+        override val targetKey: String get() = "category:${category.id}"
 
         override val summary: String
             get() {
@@ -84,6 +96,8 @@ sealed interface RuleDelta {
         override val direction: ChangeDirection
             get() = compare(before?.strictness ?: 0, after?.strictness ?: 0)
 
+        override val targetKey: String get() = "app:$packageName"
+
         override val summary: String
             get() {
                 val label = after?.label ?: before?.label ?: packageName
@@ -114,6 +128,8 @@ sealed interface RuleDelta {
         override val direction: ChangeDirection
             get() = compare(before?.strictness ?: 0, after?.strictness ?: 0)
 
+        override val targetKey: String get() = "destination:${host.lowercase()}"
+
         override val summary: String
             get() = when {
                 before == null && after != null -> "Never reach $host, by any route"
@@ -135,6 +151,8 @@ sealed interface RuleDelta {
     ) : RuleDelta {
         override val direction: ChangeDirection
             get() = compare(before?.strictness ?: Int.MIN_VALUE, after?.strictness ?: Int.MIN_VALUE)
+
+        override val targetKey: String get() = "budget:$budgetId"
 
         override val summary: String
             get() {
@@ -168,6 +186,8 @@ sealed interface RuleDelta {
                 val afterRank = after?.let { profileStrictness(it) } ?: 0
                 return compare(beforeRank, afterRank)
             }
+
+        override val targetKey: String get() = "profile:$profileId"
 
         override val summary: String
             get() {
@@ -209,6 +229,8 @@ sealed interface RuleDelta {
                 else -> ChangeDirection.TIGHTENS
             }
 
+        override val targetKey: String get() = "focus"
+
         override val summary: String
             get() = when {
                 after != null && before == null -> "Start \"${after.label}\""
@@ -232,6 +254,8 @@ sealed interface RuleDelta {
                 before != null && after != null && before.enabled && !after.enabled -> ChangeDirection.LOOSENS
                 else -> ChangeDirection.TIGHTENS
             }
+
+        override val targetKey: String get() = "partner"
 
         override val summary: String
             get() = when {
@@ -265,6 +289,8 @@ sealed interface RuleDelta {
                 return compare(before, after)
             }
 
+        override val targetKey: String get() = "guard"
+
         override val summary: String
             get() = when {
                 beforeCoolingOffHours != afterCoolingOffHours ->
@@ -287,6 +313,30 @@ sealed interface RuleDelta {
             maxGraceTapsPerDay = afterMaxGraceTaps,
             blurFlaggedImages = afterBlurImages,
         )
+    }
+
+    /**
+     * Turning the self-binding lock on or off.
+     *
+     * Arming is instant — deciding to be bound should never be the thing you have to wait
+     * for. Disarming is a weakening like any other, and a bigger one than most, so it
+     * waits out the full cooling-off period. That asymmetry is the entire mechanism: the
+     * lock is cheap to enter and expensive to leave.
+     */
+    @Serializable
+    data class ArmingChange(
+        val before: Boolean,
+        val after: Boolean,
+    ) : RuleDelta {
+        override val direction: ChangeDirection
+            get() = if (after) ChangeDirection.TIGHTENS else ChangeDirection.LOOSENS
+
+        override val targetKey: String get() = "armed"
+
+        override val summary: String
+            get() = if (after) "Lock in your rules" else "Unlock rules for editing"
+
+        override fun applyTo(rules: RuleSet): RuleSet = rules.copy(armed = after)
     }
 
     companion object {

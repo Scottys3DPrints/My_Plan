@@ -142,7 +142,26 @@ class RulesEngine(
         )
     }
 
-    fun evaluateApp(packageName: String, rules: RuleSet, usage: UsageState): Decision {
+    /**
+     * [exemptPackages] can never be blocked, whatever the rules say.
+     *
+     * This is a safety floor, not a convenience. Without it a focus session — which by
+     * design cannot be ended early — blocks the launcher and the Settings app, leaving a
+     * phone that cannot reach its own home screen and an app that cannot be turned off or
+     * uninstalled until the session expires. A self-control tool is allowed to be
+     * difficult; it is not allowed to brick the device it runs on.
+     *
+     * The caller supplies the set because resolving "which app is the launcher" needs the
+     * platform, and this module deliberately has no access to it.
+     */
+    fun evaluateApp(
+        packageName: String,
+        rules: RuleSet,
+        usage: UsageState,
+        exemptPackages: Set<String> = emptySet(),
+    ): Decision {
+        if (packageName in exemptPackages) return Decision.allow(route = RouteContext.APP)
+
         val now = clock.nowMillis()
         val offset = clock.utcOffsetMinutes()
         val route = RouteContext.APP

@@ -49,6 +49,9 @@ class AegisAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         engine = AegisEngine.get(this)
+        // Resolved here rather than once at install: the user can change launcher at any
+        // time, and a stale answer would mean blocking the home screen.
+        engine.refreshCriticalPackages()
         isConnected = true
     }
 
@@ -231,6 +234,10 @@ class AegisAccessibilityService : AccessibilityService() {
         target: String,
         logEntryId: String? = null,
     ) {
+        // Belt and braces. The engine already refuses to block these, but this is the one
+        // code path that can take the screen away from the user, so it checks again here.
+        if (engine.isCritical(packageName)) return
+
         val now = SystemClock.elapsedRealtime()
         // An app that relaunches itself would otherwise produce a strobe of block screens.
         if (target == lastBlockedTarget && now - lastBlockAt < BLOCK_COOLDOWN_MILLIS) return

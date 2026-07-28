@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -45,18 +46,24 @@ fun CategoriesScreen() {
     val engine = remember { AegisEngine.get(context) }
     val scope = rememberCoroutineScope()
     val rules by engine.rules.collectAsState()
+    val pending by engine.pending.collectAsState()
 
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         item {
             SectionHeader(
                 title = "Categories",
-                subtitle = "Aegis judges what a page contains, so a site it has never seen is still caught.",
+                subtitle = if (rules.armed) {
+                    "Stricter applies at once. Looser waits ${rules.coolingOffHours}h."
+                } else {
+                    "Aegis judges what a page contains, so a site it has never seen is still caught."
+                },
             )
         }
 
         items(Category.entries.toList(), key = { it.id }) { category ->
             val rule = rules.ruleFor(category)
             val effective = engine.effectiveMode(category)
+            val waiting = pending.firstOrNull { "category:${category.id}" in it.targetKeys }
 
             AegisCard {
                 Text(category.label, fontWeight = FontWeight.SemiBold)
@@ -93,6 +100,20 @@ fun CategoriesScreen() {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
+                }
+
+                // Without this the chip simply springs back and the screen looks broken.
+                if (waiting != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Waiting: ${waiting.summary} — in " +
+                            LocalTime.formatDuration(engine.minutesRemaining(waiting)) + ".",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    TextButton(onClick = { scope.launch { engine.cancelPending(waiting.id) } }) {
+                        Text("Cancel that change")
+                    }
                 }
 
                 if (rule.mode != RuleMode.OFF) {
@@ -139,8 +160,13 @@ fun CategoriesScreen() {
 
         item {
             Explanation(
-                "Tightening a rule applies at once. Loosening one waits out the cooling-off " +
-                    "period — including lowering sensitivity or raising a budget.",
+                if (rules.armed) {
+                    "Tightening a rule applies at once. Loosening one waits out the cooling-off " +
+                        "period — including lowering sensitivity or raising a budget."
+                } else {
+                    "Nothing is locked yet, so every change here applies immediately. Lock your " +
+                        "rules in from the Home screen when they look right."
+                },
             )
         }
 

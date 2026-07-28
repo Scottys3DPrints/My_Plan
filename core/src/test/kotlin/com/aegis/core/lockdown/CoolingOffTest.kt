@@ -22,9 +22,10 @@ class CoolingOffTest {
 
     private val hour = 3_600_000L
 
+    /** Armed, i.e. the state the lock is actually meant to be tested in. */
     private fun setup(): Triple<FakeClock, CoolingOff, RuleSet> {
         val clock = FakeClock(wallMillis = 1_700_000_000_000, monotonicMillis = 500_000)
-        return Triple(clock, CoolingOff(clock), RuleSet.defaults())
+        return Triple(clock, CoolingOff(clock), RuleSet.defaults().copy(armed = true))
     }
 
     @Test
@@ -238,6 +239,137 @@ class CoolingOffTest {
 
         assertNull(outcome.queued)
         assertTrue(outcome.appliedDeltas.isEmpty())
+    }
+
+    // ------------------------------------------------------------------ setup mode
+
+    @Test
+    fun `before the lock is armed, every change applies immediately`() {
+        // The bug this exists to prevent: a fresh install where the first edit to any
+        // setting silently queues for 24 hours, so the app cannot be configured at all.
+        val clock = FakeClock(wallMillis = 1_700_000_000_000, monotonicMillis = 500_000)
+        val coolingOff = CoolingOff(clock)
+        val rules = RuleSet.defaults()
+
+        assertFalse(rules.armed, "a fresh install must start unarmed")
+
+        val outcome = coolingOff.submit(
+            rules,
+            rules.withCategoryRule(CategoryRule(Category.ADULT, RuleMode.OFF)),
+            idSeed = "s1",
+        )
+
+        assertNull(outcome.queued, "setup-mode changes must not queue")
+        assertEquals(RuleMode.OFF, outcome.appliedNow.ruleFor(Category.ADULT).mode)
+    }
+
+    @Test
+    fun `arming is instant, disarming is not`() {
+        val clock = FakeClock(wallMillis = 1_700_000_000_000, monotonicMillis = 500_000)
+        val coolingOff = CoolingOff(clock)
+        val unarmed = RuleSet.defaults()
+
+        val armed = coolingOff.submit(unarmed, unarmed.copy(armed = true), idSeed = "s2")
+        assertNull(armed.queued)
+        assertTrue(armed.appliedNow.armed)
+
+        val disarm = coolingOff.submit(armed.appliedNow, armed.appliedNow.copy(armed = false), idSeed = "s3")
+        assertNotNull(disarm.queued, "unlocking must wait, or the lock means nothing")
+        assertTrue(disarm.appliedNow.armed)
+        assertEquals("Unlock rules for editing", disarm.queued!!.summary)
+    }
+
+    @Test
+    fun `once armed, weakening is delayed again`() {
+        val (_, coolingOff, rules) = setup()
+        val outcome = coolingOff.submit(
+            rules,
+            rules.withCategoryRule(CategoryRule(Category.ADULT, RuleMode.OFF)),
+            idSeed = "s4",
+        )
+        assertNotNull(outcome.queued)
+    }
+
+    // --------------------------------------------------------------- superseding
+
+    @Test
+    fun `tapping the same control repeatedly leaves one queued change, not four`() {
+        val (_, coolingOff, rules) = setup()
+        var pending = emptyList<PendingChange>()
+
+        for ((index, mode) in listOf(RuleMode.WARN, RuleMode.TIMED, RuleMode.OFF).withIndex()) {
+            val outcome = coolingOff.submit(
+                rules,
+                rules.withCategoryRule(CategoryRule(Category.ADULT, mode)),
+                idSeed = "tap$index",
+            )
+            pending = coolingOff.enqueue(pending, outcome.queued!!)
+        }
+
+        assertEquals(1, pending.size, "one target should have one queued change")
+        assertEquals("Adult / sexual content: Wall → Off", pending.single().summary, "the last tap wins")
+    }
+
+    @Test
+    fun `changing your mind does not restart the countdown`() {
+        // Otherwise fiddling with a control resets the wait forever, and the delay is
+        // only ever as long as the gap between two taps.
+        val (clock, coolingOff, rules) = setup()
+        val first = coolingOff.submit(
+            rules,
+            rules.withCategoryRule(CategoryRule(Category.ADULT, RuleMode.WARN)),
+            idSeed = "m1",
+        ).queued!!
+        var pending = coolingOff.enqueue(emptyList(), first)
+
+        clock.advance(20 * hour)
+
+        val second = coolingOff.submit(
+            rules,
+            rules.withCategoryRule(CategoryRule(Category.ADULT, RuleMode.OFF)),
+            idSeed = "m2",
+        ).queued!!
+        pending = coolingOff.enqueue(pending, second)
+
+        assertEquals(1, pending.size)
+        assertEquals(
+            first.effectiveAtMillis,
+            pending.single().effectiveAtMillis,
+            "the original deadline should be inherited",
+        )
+
+        clock.advance(4 * hour)
+        assertTrue(coolingOff.isReady(pending.single()), "should land 24h after the first attempt")
+    }
+
+    @Test
+    fun `changes to different controls queue independently`() {
+        val (_, coolingOff, rules) = setup()
+        val adult = coolingOff.submit(
+            rules,
+            rules.withCategoryRule(CategoryRule(Category.ADULT, RuleMode.OFF)),
+            idSeed = "d1",
+        ).queued!!
+        val gambling = coolingOff.submit(
+            rules,
+            rules.withCategoryRule(CategoryRule(Category.GAMBLING, RuleMode.OFF)),
+            idSeed = "d2",
+        ).queued!!
+
+        val pending = coolingOff.enqueue(coolingOff.enqueue(emptyList(), adult), gambling)
+        assertEquals(2, pending.size)
+    }
+
+    @Test
+    fun `a queued change names the control it is waiting on`() {
+        val (_, coolingOff, rules) = setup()
+        val queued = coolingOff.submit(
+            rules,
+            rules.withCategoryRule(CategoryRule(Category.ADULT, RuleMode.OFF)),
+            idSeed = "k1",
+        ).queued!!
+
+        assertEquals(setOf("category:adult"), queued.targetKeys)
     }
 
     @Test

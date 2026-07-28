@@ -28,6 +28,9 @@ data class PendingChange(
 ) {
     val summary: String get() = deltas.joinToString("; ") { it.summary }
 
+    /** The controls this change is waiting on, so a screen can say so beside them. */
+    val targetKeys: Set<String> get() = deltas.map { it.targetKey }.toSet()
+
     fun millisRemaining(nowMillis: Long): Long = (effectiveAtMillis - nowMillis).coerceAtLeast(0)
 }
 
@@ -102,6 +105,10 @@ class CoolingOff(private val clock: Clock) {
             if (before != after) deltas += RuleDelta.ProfileChange(id, before, after)
         }
 
+        if (current.armed != proposed.armed) {
+            deltas += RuleDelta.ArmingChange(current.armed, proposed.armed)
+        }
+
         if (current.focusSession != proposed.focusSession) {
             deltas += RuleDelta.FocusSessionChange(current.focusSession, proposed.focusSession)
         }
@@ -150,8 +157,10 @@ class CoolingOff(private val clock: Clock) {
             return ChangeOutcome(current, null, emptyList(), emptyList())
         }
 
-        val immediate = deltas.filter { it.direction != ChangeDirection.LOOSENS }
-        val deferred = deltas.filter { it.direction == ChangeDirection.LOOSENS }
+        // Setup mode: nothing is bound yet, so nothing is held back. See RuleSet.armed
+        // for why this is not a way around the lock.
+        val immediate = if (!current.armed) deltas else deltas.filter { it.direction != ChangeDirection.LOOSENS }
+        val deferred = if (!current.armed) emptyList() else deltas.filter { it.direction == ChangeDirection.LOOSENS }
 
         var applied = current
         for (delta in immediate) {
@@ -235,6 +244,34 @@ class CoolingOff(private val clock: Clock) {
      */
     fun cancel(pending: List<PendingChange>, id: String): List<PendingChange> =
         pending.filterNot { it.id == id }
+
+    /**
+     * Add [change] to the queue, dropping anything it supersedes.
+     *
+     * Without this, tapping a control four times leaves four contradictory entries in the
+     * queue, each of which will land in turn — so the setting the user finally sees is
+     * whichever tap happened to be last in the list, twenty-four hours later. One target,
+     * one queued change.
+     *
+     * Superseding does **not** restart the clock. The wait belongs to the decision to
+     * weaken this thing, not to the last time the user fiddled with it — otherwise
+     * repeatedly adjusting a slider would reset the countdown forever, and cancelling by
+     * accident would be easier than cancelling on purpose.
+     */
+    fun enqueue(pending: List<PendingChange>, change: PendingChange): List<PendingChange> {
+        val targets = change.targetKeys
+        val superseded = pending.filter { it.targetKeys.any { key -> key in targets } }
+        if (superseded.isEmpty()) return pending + change
+
+        val inheritedDeadline = superseded.minOf { it.effectiveAtMillis }
+        val inheritedMonotonic = superseded.minOf { it.minElapsedRealtime }
+        val rebased = change.copy(
+            effectiveAtMillis = minOf(change.effectiveAtMillis, inheritedDeadline),
+            minElapsedRealtime = minOf(change.minElapsedRealtime, inheritedMonotonic),
+            requestedAtElapsed = minOf(change.requestedAtElapsed, superseded.minOf { it.requestedAtElapsed }),
+        )
+        return pending.filterNot { it in superseded } + rebased
+    }
 }
 
 data class DueResult(

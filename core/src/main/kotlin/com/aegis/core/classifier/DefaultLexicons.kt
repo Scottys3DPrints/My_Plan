@@ -154,7 +154,11 @@ object DefaultLexicons {
         ),
         dampeners = emptyList(),
         hostSubstrings = listOf("facebook", "instagram", "tiktok", "snapchat", "pinterest"),
-        hostTokens = listOf("x", "twitter", "reddit", "threads", "tumblr", "9gag"),
+        // "x" is deliberately absent. A single-letter label matches things like
+        // cdn-x.example.com, and with Social on a timed budget that would start blocking
+        // random content hosts every evening. x.com is better handled as a destination
+        // rule, where the user asked for it explicitly.
+        hostTokens = listOf("twitter", "reddit", "threads", "tumblr", "9gag"),
         tlds = emptyList(),
     )
 

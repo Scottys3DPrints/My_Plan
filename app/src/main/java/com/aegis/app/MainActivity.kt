@@ -16,12 +16,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -31,6 +36,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.aegis.app.browser.BrowserScreen
 import com.aegis.app.engine.AegisEngine
+import com.aegis.app.engine.ChangeNotice
 import com.aegis.app.ui.screens.AppsScreen
 import com.aegis.app.ui.screens.CategoriesScreen
 import com.aegis.app.ui.screens.DestinationsScreen
@@ -38,6 +44,7 @@ import com.aegis.app.ui.screens.HomeScreen
 import com.aegis.app.ui.screens.LogScreen
 import com.aegis.app.ui.screens.SettingsScreen
 import com.aegis.app.ui.theme.AegisTheme
+import com.aegis.core.util.LocalTime
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -81,7 +88,26 @@ private fun AegisApp() {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
 
+    val context = LocalContext.current
+    val engine = remember { AegisEngine.get(context) }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Every deferred edit surfaces here. Without it, a tap on a locked control looks
+    // exactly like a bug — which is what it was mistaken for.
+    LaunchedEffect(Unit) {
+        engine.notices.collect { notice ->
+            val message = when (notice) {
+                is ChangeNotice.Deferred ->
+                    "Waiting ${LocalTime.formatDuration(notice.minutesRemaining)} — ${notice.summary}"
+
+                is ChangeNotice.Applied -> "Now in effect: ${notice.summary}"
+            }
+            snackbarHostState.showSnackbar(message)
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             NavigationBar {
                 for (section in SECTIONS) {
