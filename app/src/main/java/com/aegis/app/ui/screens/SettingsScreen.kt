@@ -427,6 +427,12 @@ fun SettingsScreen() {
                 )
                 Spacer(Modifier.height(6.dp))
                 StatRow("Last block attempt", observation.lastEnforcement.ifBlank { "—" })
+                Spacer(Modifier.height(6.dp))
+                StatRow(
+                    "Page credited to",
+                    if (observation.mismatches == 0L) "the app that reported it"
+                    else "the window on screen (${observation.mismatches} corrected)",
+                )
                 Spacer(Modifier.height(16.dp))
                 var testResult by remember { mutableStateOf("") }
                 Button(

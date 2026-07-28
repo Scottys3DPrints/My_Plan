@@ -179,8 +179,25 @@ class AegisAccessibilityService : AccessibilityService() {
      * Two passes. Known browsers expose their address bar under a stable view id, which is
      * cheap and exact. Everything else — an in-app browser inside a chat app, a link
      * preview — gets a bounded traversal looking for something that reads like a URL.
+     *
+     * ## Why the event's package is not the package that gets blocked
+     *
+     * [eventPackage] is who *fired* the event. `rootInActiveWindow` is whatever is *in
+     * front*, and those are routinely different apps: the status bar clock ticking, a
+     * notification arriving, a media widget repainting all emit `TYPE_WINDOW_CONTENT_CHANGED`
+     * from `com.android.systemui` while Chrome is the window on screen.
+     *
+     * The old code took the event's package and used it for everything — which route to
+     * apply, which package to blame, and which package to check against the protected list.
+     * So a systemui tick would scan Chrome's page, classify it correctly, write the block to
+     * the record, and then hand `"com.android.systemui"` to [block], which refuses to act on
+     * protected packages and returned without drawing anything. Detection worked, the log
+     * filled up, and nothing ever appeared on screen — and the record even mislabelled the
+     * route as "in-app browser", because systemui is not in the known-browser map.
+     *
+     * The page belongs to the window it was read from. Take the package from there.
      */
-    private fun scanForBlockedAddress(packageName: String) {
+    private fun scanForBlockedAddress(eventPackage: String) {
         val root = try {
             rootInActiveWindow
         } catch (error: Exception) {
@@ -188,6 +205,15 @@ class AegisAccessibilityService : AccessibilityService() {
         } ?: return
 
         try {
+            val packageName = root.packageName?.toString()?.takeIf { it.isNotBlank() }
+                ?: eventPackage
+            // Our own browser judges its pages before it renders them; scanning it here
+            // would double-block and attribute the block to Aegis.
+            if (packageName == this.packageName) return
+            if (packageName != eventPackage) {
+                engine.diagnostics.recordWindowMismatch(eventPackage, packageName)
+            }
+
             val url = addressFromKnownBrowser(root, packageName) ?: addressFromAnyTextNode(root)
             if (url.isNullOrBlank()) {
                 engine.diagnostics.recordNoAddress(packageName)
@@ -215,7 +241,13 @@ class AegisAccessibilityService : AccessibilityService() {
             //    cases before any traversal happens.
             val byHost = engine.evaluateHost(host, route)
             if (byHost.decision.isBlocked) {
-                block(packageName, byHost.decision, target = host, logEntryId = byHost.logEntryId)
+                block(
+                    packageName = packageName,
+                    decision = byHost.decision,
+                    target = host,
+                    logEntryId = byHost.logEntryId,
+                    kind = BlockKind.PAGE,
+                )
                 return
             }
 
@@ -255,7 +287,13 @@ class AegisAccessibilityService : AccessibilityService() {
             // Only a block acts here. A warning would mean throwing an interstitial over
             // somebody else's browser, which is both ugly and easy to get wrong.
             if (byContent.decision.isBlocked) {
-                block(packageName, byContent.decision, target = host, logEntryId = byContent.logEntryId)
+                block(
+                    packageName = packageName,
+                    decision = byContent.decision,
+                    target = host,
+                    logEntryId = byContent.logEntryId,
+                    kind = BlockKind.PAGE,
+                )
             }
         } finally {
             @Suppress("DEPRECATION")
@@ -393,10 +431,23 @@ class AegisAccessibilityService : AccessibilityService() {
         decision: Decision,
         target: String,
         logEntryId: String? = null,
+        kind: BlockKind = BlockKind.APP,
     ) {
         // Belt and braces. The engine already refuses to block these, but this is the one
         // code path that can take the screen away from the user, so it checks again here.
-        if (engine.isCritical(packageName)) {
+        //
+        // The list means two different things depending on what is being blocked, and
+        // conflating them is what made page blocks disappear. Refusing to block *the
+        // launcher as an app* is what stops a focus session from leaving a phone with no
+        // home screen. Refusing to block *a web page* because the app showing it is on the
+        // list protects nothing — the page is still on screen, and the block screen has a
+        // Close button. So a page block only steps aside for windows that are not somebody
+        // browsing: our own UI, and the system's.
+        val protected = when (kind) {
+            BlockKind.APP -> engine.isCritical(packageName)
+            BlockKind.PAGE -> packageName in NEVER_OVERLAY
+        }
+        if (protected) {
             engine.diagnostics.recordEnforcement("skipped — $packageName is protected")
             return
         }
@@ -543,6 +594,20 @@ class AegisAccessibilityService : AccessibilityService() {
             "com.sec.android.app.sbrowser" to "com.sec.android.app.sbrowser:id/location_bar_edit_text",
         )
 
+        /**
+         * The only windows a *page* block will step aside for.
+         *
+         * Deliberately much shorter than the critical-package list. That list stops a
+         * focus session from blocking the launcher or Settings *as apps*, which would
+         * leave the phone unusable. It has no business suppressing a block screen over a
+         * web page — the page is on screen either way, and the block screen closes with a
+         * button. Reusing it there is what made Chrome blocks vanish.
+         */
+        private val NEVER_OVERLAY = setOf(
+            "com.android.systemui",
+            "android",
+        )
+
         /** Used to attribute foreground time to the shared "Social" bucket. */
         private val SOCIAL_PACKAGES = setOf(
             "com.facebook.katana",
@@ -572,3 +637,15 @@ class AegisAccessibilityService : AccessibilityService() {
         }
     }
 }
+
+/**
+ * What is being stopped, which decides how much the protected-package list is allowed to say.
+ *
+ * [APP] — the app itself is off limits under a rule or a focus session. Here the protected
+ * list is absolute: blocking the launcher or Settings would leave the phone with nowhere to
+ * go and no way to reach the switch that turns Aegis off.
+ *
+ * [PAGE] — a web page inside some app is off limits. The app is not the problem and is not
+ * being taken away; a screen is being put in front of one page, with a Close button on it.
+ */
+enum class BlockKind { APP, PAGE }

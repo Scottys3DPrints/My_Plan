@@ -291,6 +291,12 @@ other browser, come back, and read it:
 | *Read N characters. Nothing matched.* | It read the page; the words are not in the lexicon. | Tell me the site and I will extend it. |
 | *Closest: Adult at 45%* | It read the page and scored it below your threshold. | Set that category to **Cautious** in Rules. |
 | *Last page was blocked* + *could not show a block screen* | It judged correctly but could not put anything on screen. | Tell me your Android version. |
+| *Last block attempt: skipped — … is protected* | It credited the page to the wrong app and stood down. | Should no longer happen; tell me which package it names. |
+
+**Page credited to** in that panel is the other half of the same story. The guard is woken
+by *events*, and the app that fires an event is often not the app on screen — the status
+bar repainting wakes it while Chrome is in front. It now reads which window it actually
+looked at and blames that, and the counter tells you how often it had to correct itself.
 
 If nothing else works, add the site under **Never reach**, which needs no classifier at
 all and is enforced by DNS as well as the guard.

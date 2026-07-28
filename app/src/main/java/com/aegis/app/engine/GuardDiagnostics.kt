@@ -51,6 +51,23 @@ class GuardDiagnostics {
         _state.value = _state.value.copy(lastEnforcement = outcome)
     }
 
+    /**
+     * The event came from one app while a different app was on screen.
+     *
+     * Normal and frequent — the status bar repaints constantly — but worth counting,
+     * because attributing the page on screen to whichever app happened to fire the event
+     * is precisely the mistake that made Chrome blocks detect correctly and then never
+     * appear. If this stays at zero on a device where blocking is failing, the cause is
+     * somewhere else.
+     */
+    fun recordWindowMismatch(eventPackage: String, windowPackage: String) {
+        _state.value = _state.value.copy(
+            lastEventPackage = eventPackage,
+            lastWindowPackage = windowPackage,
+            mismatches = _state.value.mismatches + 1,
+        )
+    }
+
     fun recordNoAddress(packageName: String) {
         _state.value = _state.value.copy(
             lastPackage = packageName,
@@ -71,6 +88,11 @@ data class GuardObservation(
     val observations: Long = 0,
     val harvests: Long = 0,
     val lastEnforcement: String = "",
+    /** Who fired the last event whose package differed from the window on screen. */
+    val lastEventPackage: String = "",
+    /** What was actually in front at that moment — the package the page belongs to. */
+    val lastWindowPackage: String = "",
+    val mismatches: Long = 0,
 ) {
     /**
      * The one-line reading of the numbers above, in the terms someone debugging would use.
