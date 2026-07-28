@@ -81,9 +81,15 @@ added the restriction to stop malware sideloaded by a scam caller from switching
 accessibility service, which is a good rule that also catches legitimate sideloaded apps
 like this one.
 
-The service reads which app is in the foreground (for app blocks and time budgets) and the
-address bar of other browsers (to catch a destination you asked never to reach, opened
-through someone else's in-app browser). It runs entirely on the device.
+The service reads which app is in the foreground (for app blocks and time budgets), and in
+browsers it reads the address bar and the page text — that last part is what lets it block
+explicit content in Chrome the same way it does in its own browser.
+
+Page text is classified in memory and thrown away on the next scan. It is never written to
+storage and never leaves the phone; the only thing kept is what already appears in the
+Record: a hostname, a verdict, and the words that matched. Aegis only reads text from a
+window that is already showing a web address, so it does not walk the screen of your
+messages or your notes.
 
 ### Usage access, optional
 
@@ -213,29 +219,48 @@ otherwise.
 
 ## Does it block sites in Chrome?
 
-Yes — by two independent routes, with one setting you should change.
+Yes, and it now judges pages the same way its own browser does.
 
-**The DNS filter** covers every app on the phone, Chrome included. When Chrome looks up a
-blocked hostname, Aegis answers with an unroutable address and the page fails to load.
+**Three layers, in the order they act:**
 
-**The app & route guard** reads Chrome's address bar and holds it to the same destination
-rules and hostname classification as the Aegis browser. If a blocked site loads, Aegis
-takes you back and shows why. This path works even when DNS filtering does not.
+1. **The DNS filter** covers every app. A blocked hostname gets an unroutable address and
+   the page never loads.
+2. **The address check.** The guard reads Chrome's address bar and applies your
+   destination rules and hostname classification.
+3. **The page check.** If a page survives both, the guard reads the rendered text out of
+   Chrome's accessibility tree and runs the full classifier on it — so explicit content on
+   a site with a perfectly innocent-sounding name is caught on what it contains, not on
+   what it is called.
+
+Layer 3 is the one that matters most in practice. The name of a site is chosen by the
+people who run it, and choosing a bland one is free.
 
 ### Turn off Chrome's Secure DNS
 
-Chrome can send its lookups over its own encrypted connection (DNS-over-HTTPS), which
-routes straight past the DNS filter. Turn it off so both routes work:
-
 **Chrome → ⋮ → Settings → Privacy and security → Use secure DNS → off.**
 
-The guard still catches things without this, but the DNS filter is the faster and quieter
-of the two — it stops the page before it loads rather than after.
+Chrome can send lookups over its own encrypted connection, which routes past layer 1.
+Layers 2 and 3 still work without this, but DNS stops the page before it loads rather
+than after.
 
-### What Chrome does *not* get
+### What Chrome still doesn't get
 
-Full content classification. In the Aegis browser, Aegis renders the page and can read its
-text, metadata and images — so a brand-new site with no recognisable name is still judged
-on what it contains, and individual images can be blurred on a page that is otherwise
-fine. In Chrome, Aegis only ever sees the hostname. That is the honest difference, and it
-is why the built-in browser exists.
+**Images.** In its own browser Aegis can blur one explicit picture on an otherwise fine
+page, because it controls the renderer. In Chrome it can only judge the page as a whole.
+
+**Instant verdicts.** The page check runs when the address changes, so there is a moment
+where content is on screen before the block appears. The built-in browser decides before
+anything renders.
+
+**Warnings.** In Chrome, a page the classifier is *unsure* about is logged but not acted
+on — throwing an interstitial over somebody else's browser on a maybe is the wrong trade.
+Check **Record** to see what it flagged without blocking, and tighten the category's
+sensitivity to Cautious if things are getting through.
+
+### If something still gets through
+
+1. Confirm the **app & route guard** is on (Home screen). Layer 3 needs it.
+2. Open **Record** — if the page is listed as *Warned*, it was seen but scored below your
+   threshold. Set that category to **Cautious** in Rules.
+3. If it is not listed at all, the page text was not exposed. Add the site under
+   **Never reach**, which needs no classifier at all.

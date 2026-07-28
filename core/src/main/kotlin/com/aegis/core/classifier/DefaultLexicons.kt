@@ -38,7 +38,19 @@ object DefaultLexicons {
             t("art history", 0.8f), t("life drawing", 0.8f), t("puberty", 0.6f),
             t("safeguarding", 0.8f), t("content moderation", 0.8f), t("age verification policy", 0.6f),
         ),
-        hostSubstrings = listOf("porn", "xxx", "hentai", "camgirl", "onlyfans", "nsfw", "escort"),
+        // Generic morphemes, not a list of site names.
+        //
+        // A brand list is the approach this whole product rejects: it ages badly, it is
+        // endless, and a new domain defeats it on day one. These pieces recur across
+        // thousands of hostnames instead. Each one is chosen so that it cannot appear
+        // innocently inside an ordinary word — which is why "anal" and "tits" are absent
+        // despite being obvious candidates, since they would fire on "analytics" and
+        // "petits". The hostname is only ever a first pass anyway; page text is what
+        // actually generalises.
+        hostSubstrings = listOf(
+            "porn", "xxx", "hentai", "camgirl", "camgirls", "onlyfans", "nsfw", "escort",
+            "fuck", "milf", "boobs", "erotic", "fetish", "bdsm", "sexcam", "nudes",
+        ),
         hostTokens = listOf("adult", "nude", "sex", "cam", "cams", "xnxx", "redtube", "tube8"),
         tlds = listOf("xxx", "porn", "sex", "adult", "cam"),
     )

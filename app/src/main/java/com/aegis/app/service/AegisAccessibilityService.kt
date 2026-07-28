@@ -23,17 +23,25 @@ import com.aegis.core.util.Urls
  * 1. **Which app is in front.** Drives app blocks and is what makes a time budget tick.
  * 2. **How long it has been in front.** Accrued in seconds and handed to the budget
  *    tracker, which is why leaving and re-entering an app does not reset anything.
- * 3. **What address another browser is showing.** Reading the address bar is the only way
- *    to catch "you deleted Facebook, but Messenger's in-app browser still opens it" at
- *    the moment it happens rather than after the fact.
+ * 3. **What another browser is showing** — both the address and, on a page that survives
+ *    the hostname check, the rendered text. Judging a foreign page on its name alone lets
+ *    through anything with a neutral one, which is most of what people need blocked: the
+ *    name of a site is chosen by the people who run it, and choosing an innocuous one is
+ *    free. Reading the text is what makes Chrome behave like the built-in browser.
  *
  * ## On the cost of this permission
  *
- * An accessibility service can read the screen. That is an enormous amount of trust, and
- * pretending otherwise would be dishonest. Three things bound it: the work happens
- * entirely in this process, nothing read here is stored beyond the hostname that appears
- * in the transparency log, and everything except the URL check is throttled to a glance
- * at the foreground package rather than a traversal of the screen.
+ * An accessibility service can read the screen, and this one reads page text. That is an
+ * enormous amount of trust and pretending otherwise would be dishonest, so here is exactly
+ * what happens to what it reads:
+ *
+ * - It is classified in this process, in memory, and discarded on the next scan. No page
+ *   text is written to storage, and none of it leaves the device.
+ * - The only thing kept is what already appears in the transparency log: a hostname, a
+ *   verdict, and the matched terms.
+ * - Text is only read from a window that is already showing an address — a browser or a
+ *   webview. Aegis does not walk the screen of a messaging app or a notes app.
+ * - The walk is hard-bounded and throttled, so it cannot become a battery or jank problem.
  */
 class AegisAccessibilityService : AccessibilityService() {
 
@@ -43,6 +51,9 @@ class AegisAccessibilityService : AccessibilityService() {
     private var foregroundSince: Long = 0L
 
     private var lastUrlScanAt: Long = 0L
+    private var lastHarvestedUrl: String? = null
+    private var lastHarvestAt: Long = 0L
+    private var lastWindowTitle: String = ""
     private var lastBlockedTarget: String? = null
     private var lastBlockAt: Long = 0L
 
@@ -72,6 +83,9 @@ class AegisAccessibilityService : AccessibilityService() {
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                // Browsers put the page title here. It is a strong signal the harvested
+                // body text cannot supply on its own.
+                rememberWindowTitle(event)
                 onForegroundChanged(packageName)
                 checkForegroundApp(packageName)
                 scanForBlockedAddress(packageName)
@@ -87,6 +101,22 @@ class AegisAccessibilityService : AccessibilityService() {
                 }
             }
         }
+    }
+
+    /**
+     * Keep whatever the window announced as its title.
+     *
+     * Discarded when it is just the app's own name, which is what browsers report before a
+     * page has settled — using that as a page title would be noise fed to the classifier.
+     */
+    private fun rememberWindowTitle(event: AccessibilityEvent) {
+        val announced = event.text.orEmpty()
+            .filterNotNull()
+            .joinToString(" ") { it.toString() }
+            .trim()
+        if (announced.isBlank() || announced.length > MAX_TITLE_LENGTH) return
+        if (announced.equals("Chrome", ignoreCase = true)) return
+        lastWindowTitle = announced
     }
 
     // ------------------------------------------------------------- foreground tracking
@@ -152,14 +182,85 @@ class AegisAccessibilityService : AccessibilityService() {
                 RouteContext.IN_APP_WEBVIEW
             }
 
-            val verdict = engine.evaluateHost(host, route)
-            if (verdict.decision.isBlocked) {
-                block(packageName, verdict.decision, target = host, logEntryId = verdict.logEntryId)
+            // 1. The hostname. Cheap, so it runs on every scan and catches the obvious
+            //    cases before any traversal happens.
+            val byHost = engine.evaluateHost(host, route)
+            if (byHost.decision.isBlocked) {
+                block(packageName, byHost.decision, target = host, logEntryId = byHost.logEntryId)
+                return
+            }
+
+            // 2. The page itself. Expensive, so it runs when the address changes or after
+            //    a pause — pages fill in progressively, and the first tree after
+            //    navigation is often still empty.
+            val now = SystemClock.elapsedRealtime()
+            val addressChanged = url != lastHarvestedUrl
+            if (!addressChanged && now - lastHarvestAt < CONTENT_RESCAN_MILLIS) return
+            lastHarvestedUrl = url
+            lastHarvestAt = now
+
+            val text = harvestVisibleText(root)
+            if (text.length < MIN_TEXT_TO_JUDGE) return
+
+            val byContent = engine.evaluateForeignPage(url, lastWindowTitle, text, route)
+            // Only a block acts here. A warning would mean throwing an interstitial over
+            // somebody else's browser, which is both ugly and easy to get wrong.
+            if (byContent.decision.isBlocked) {
+                block(packageName, byContent.decision, target = host, logEntryId = byContent.logEntryId)
             }
         } finally {
             @Suppress("DEPRECATION")
             root.recycle()
         }
+    }
+
+    /**
+     * Collect the rendered text of the page from the accessibility tree.
+     *
+     * Chrome and the other Chromium browsers expose web content to accessibility services
+     * — it is how a screen reader reads a page — so the same tree that yields the address
+     * bar also yields the paragraph text. That makes it possible to judge a foreign page
+     * on what it contains rather than on what it is called.
+     *
+     * Hard bounds on nodes, depth and characters. An unbounded walk of a long article on a
+     * mid-range phone is a visible stall, and a filter that makes the browser feel broken
+     * gets switched off — which protects nobody. Missing some text is recoverable; missing
+     * it on the next scan a second later usually is not, because the bounds are generous
+     * enough that the visible screen fits inside them.
+     */
+    private fun harvestVisibleText(root: AccessibilityNodeInfo): String {
+        val builder = StringBuilder()
+        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
+        queue.add(root to 0)
+        var visited = 0
+
+        while (queue.isNotEmpty() && visited < MAX_HARVEST_NODES && builder.length < MAX_HARVEST_CHARS) {
+            val (node, depth) = queue.removeFirst()
+            visited++
+
+            val piece = node.text ?: node.contentDescription
+            if (!TextUtils.isEmpty(piece)) {
+                val value = piece.toString().trim()
+                // Single tokens are usually chrome — button labels, tab counts. Phrases
+                // are what the classifier can actually reason about.
+                if (value.length in 2..MAX_HARVEST_CHARS) {
+                    builder.append(value).append(' ')
+                }
+            }
+
+            if (depth < MAX_HARVEST_DEPTH) {
+                for (index in 0 until node.childCount) {
+                    val child = try {
+                        node.getChild(index)
+                    } catch (error: Exception) {
+                        null
+                    } ?: continue
+                    queue.add(child to depth + 1)
+                }
+            }
+        }
+
+        return builder.toString().take(MAX_HARVEST_CHARS)
     }
 
     private fun addressFromKnownBrowser(root: AccessibilityNodeInfo, packageName: String): String? {
@@ -268,6 +369,22 @@ class AegisAccessibilityService : AccessibilityService() {
         private const val MAX_NODES_SCANNED = 220
         private const val MAX_SCAN_DEPTH = 14
         private const val MAX_URL_LENGTH = 2_000
+
+        /**
+         * Bounds on reading a foreign page. Generous enough that a screenful of article
+         * text fits, tight enough that the walk stays well under a frame.
+         */
+        private const val MAX_HARVEST_NODES = 600
+        private const val MAX_HARVEST_DEPTH = 32
+        private const val MAX_HARVEST_CHARS = 6_000
+
+        private const val MAX_TITLE_LENGTH = 300
+
+        /** Below this there is not enough to judge, and guessing would misfire. */
+        private const val MIN_TEXT_TO_JUDGE = 80
+
+        /** How long before the same address is read again, for pages that load late. */
+        private const val CONTENT_RESCAN_MILLIS = 6_000L
 
         /** Address-bar view ids for the browsers most people actually have installed. */
         private val KNOWN_BROWSER_VIEW_IDS = mapOf(

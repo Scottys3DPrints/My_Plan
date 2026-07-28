@@ -145,6 +145,38 @@ class AegisEngine private constructor(context: Context) {
     }
 
     /**
+     * A page rendered by somebody else's browser, read off the accessibility tree.
+     *
+     * This is what closes the gap between Chrome and the built-in browser. Judging a
+     * foreign page on its hostname alone means anything with a neutral name gets through,
+     * which is most of what people actually need blocked — the name of a site is chosen by
+     * the people who run it, and choosing an innocuous one is free.
+     *
+     * The view is less complete than what the built-in browser gets: rendered text and
+     * whatever the browser exposes as a window title, with no page metadata and no images.
+     * That matters more than it sounds. A title counts for more than body text, so a page
+     * with no title attached scores lower for the same content — which would mean Chrome
+     * quietly under-blocking relative to the built-in browser. Passing the window title
+     * through is not a thumb on the scale; it is restoring a signal the classifier is
+     * already tuned to expect.
+     *
+     * What stays missing is images, so this can catch a page but cannot blur one picture
+     * on an otherwise fine one. That remains the honest difference between the two.
+     */
+    fun evaluateForeignPage(
+        url: String,
+        title: String,
+        text: String,
+        route: RouteContext,
+    ): EvaluatedPage {
+        val input = ContentInput(url = url, title = title, text = text, route = route)
+        val classification = classify(input)
+        val decision = rulesEngine.evaluateContent(input, classification, _rules.value, _usage.value)
+        val entryId = if (decision.isAllowed) null else record(Urls.host(url), decision)
+        return EvaluatedPage(entryId, classification, decision)
+    }
+
+    /**
      * The path for a hostname with no page content — a DNS question, or an address bar
      * read out of somebody else's browser.
      */

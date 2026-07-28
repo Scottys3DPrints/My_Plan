@@ -323,6 +323,58 @@ class RulesEngineTest {
     }
 
     @Test
+    fun `a neutrally-named site is caught in another browser by its text, not its name`() {
+        // The reported failure: Chrome let explicit content through because only the
+        // hostname was judged, and the name of a site is chosen by the people running it.
+        val engine = RulesEngine(clockAt(10))
+        val rules = RuleSet.defaults()
+
+        val hostOnly = ContentInput(url = "https://quiet-brook-4471.example/watch", route = RouteContext.REDIRECT)
+        assertEquals(
+            Outcome.ALLOW,
+            engine.evaluateContent(hostOnly, classifier.classify(hostOnly), rules, UsageState()).outcome,
+            "the hostname alone gives nothing away — this is why reading the page matters",
+        )
+
+        // What an accessibility harvest of such a page actually looks like: the browser's
+        // window title plus a screenful of link text and headings.
+        val harvested = hostOnly.copy(
+            title = "Free porn videos — full length adult videos",
+            text = "Watch free porn videos in HD. Thousands of adult videos, uncensored and " +
+                "updated daily. Hardcore scenes, no signup. Most viewed porn this week. " +
+                "Trending adult videos. Longest porn clips. Categories. Live cams. " +
+                "Recommended for you. More free porn.",
+        )
+        val decision = engine.evaluateContent(harvested, classifier.classify(harvested), rules, UsageState())
+
+        assertEquals(Outcome.BLOCK, decision.outcome)
+        assertEquals(Category.ADULT, decision.category)
+        assertEquals(RouteContext.REDIRECT, decision.route, "the block should name the route it came in by")
+    }
+
+    @Test
+    fun `a passing mention of adult content warns rather than blocks`() {
+        // The other side of the same coin, pinned so it cannot drift: a page that merely
+        // touches the subject must not be treated like the subject. In another browser a
+        // warning takes no action at all, which is the correct outcome for "not sure".
+        val engine = RulesEngine(clockAt(10))
+        val input = ContentInput(
+            url = "https://news.example/article/regulation",
+            title = "Regulator publishes age-verification rules",
+            text = "The regulator has published guidance for sites hosting adult videos, " +
+                "setting out how age verification should work in practice.",
+            route = RouteContext.REDIRECT,
+        )
+
+        val decision = engine.evaluateContent(input, classifier.classify(input), RuleSet.defaults(), UsageState())
+
+        assertTrue(
+            decision.outcome != Outcome.BLOCK,
+            "a news article about the subject is not the subject: got ${decision.outcome}",
+        )
+    }
+
+    @Test
     fun `a focus session never blocks the launcher or Settings`() {
         // Without this the phone has no reachable home screen for the whole session, and
         // a focus session cannot be ended early. That is a bricked device, not self-control.

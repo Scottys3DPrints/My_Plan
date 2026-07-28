@@ -20,9 +20,10 @@ browse never leaves the phone — see [Privacy](#privacy) for what that means co
 
 | | |
 |---|---|
-| **Category blocking** | Adult, graphic violence, gambling, self-harm, extremist, drugs, social. Each set to Wall, Timed, Warn, or Off. |
+| **Category blocking** | Adult, graphic violence, gambling, self-harm, extremist, drugs, social. Each set to Never, Budgeted, Ask first, or Allowed. |
 | **On-device classifier** | Weighted evidence over page text, title, metadata, hostname and images. Sub-millisecond, deterministic, and it can always say which words caused a block. |
-| **Hardened browser** | Where filtering is at full strength, because Aegis controls the renderer and sees the page rather than just the hostname. |
+| **Hardened browser** | Filtering at full strength: Aegis controls the renderer, so it sees text, metadata and images, and can blur one picture on an otherwise fine page. |
+| **Other browsers** | Chrome and friends get the address *and* the page text, read from the accessibility tree, so a site with an innocent-sounding name is still judged on what it contains. Images are the part only the built-in browser can reach. |
 | **App blocking & budgets** | Block an app, cap it at 30 minutes a day, or share one "Social" hour across several. |
 | **Grace tap** | Out of time? You can have five more minutes — after sixty seconds of sitting and waiting for them. |
 | **No side doors** | "Never reach facebook.com" is enforced across the Aegis browser, other browsers' address bars, in-app webviews, link previews and DNS — not just the app you deleted. |
@@ -39,7 +40,7 @@ browse never leaves the phone — see [Privacy](#privacy) for what that means co
 ```
 core/     Pure Kotlin/JVM. No Android dependencies.
           Classifier, rules engine, cooling-off, budgets, DNS/IP packet handling.
-          88 unit tests. Runs on any JDK — no Android SDK required.
+          100 unit tests. Runs on any JDK — no Android SDK required.
 
 app/      The Android app.
           Local VPN (DNS filtering), accessibility guard, hardened browser, Compose UI.
@@ -127,10 +128,11 @@ does less and says so.
 - **DNS-over-HTTPS bypasses the network filter.** An app with its own hard-coded encrypted
   resolver never asks a question the filter can see. The browser and the app guard cover
   much of this; not all of it.
-- **It cannot read inside other apps' feeds.** Blurring explicit images inside TikTok's
-  feed is not possible on Android without screen-scraping every frame, which would be both
-  a battery disaster and a far greater intrusion than this app is willing to be. Aegis
-  blocks or budgets those apps instead.
+- **It cannot read inside other apps' feeds.** Aegis classifies page text in browsers,
+  where a web address is on screen and the accessibility tree exposes the content. It does
+  not do the same to TikTok's feed: blurring individual posts would mean scraping every
+  frame of every app, which is both a battery disaster and a far greater intrusion than
+  this app is willing to be. Aegis blocks or budgets those apps instead.
 - **iOS is not supported and this design does not port.** Apple permits app limits and a
   network content filter, but not the accessibility APIs the app guard depends on. That
   would be a different product, not a build target.

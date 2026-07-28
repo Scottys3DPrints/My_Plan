@@ -3,7 +3,7 @@
     <string name="app_name">Aegis</string>
 
     <string name="accessibility_service_label">Aegis app &amp; route guard</string>
-    <string name="accessibility_service_description">Aegis needs this to see which app is in the foreground, so it can enforce the app blocks and time budgets you set, and to notice when an in-app browser opens a destination you asked never to reach. Everything it sees is used on the device and is never uploaded.</string>
+    <string name="accessibility_service_description">Aegis needs this to see which app is in the foreground, so it can enforce the app blocks and time budgets you set; and to read the address and page text in other browsers, so it can block explicit content there the way it does in its own browser. Page text is classified on this device, held only in memory, and never stored or uploaded. Only the hostname and the reason for a block are kept.</string>
 
     <string name="vpn_channel_name">Content filter</string>
     <string name="vpn_channel_description">Shows while the on-device filter is running.</string>

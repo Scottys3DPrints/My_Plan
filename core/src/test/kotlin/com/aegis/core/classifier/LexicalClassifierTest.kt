@@ -94,6 +94,22 @@ class LexicalClassifierTest {
     }
 
     @Test
+    fun `hostname morphemes do not fire inside ordinary words`() {
+        // The reason "anal" and "tits" are not in the lexicon. A filter that blocks an
+        // analytics CDN teaches the user to distrust every block it makes.
+        for (host in listOf(
+            "analytics.example.com",
+            "canal-plus.example",
+            "petits-fours.example",
+            "essex.gov.example",
+            "scunthorpe.gov.example",
+        )) {
+            val result = classifier.classify(ContentInput(url = "https://$host/"))
+            assertEquals(0f, result.score(Category.ADULT), "$host should not read as adult")
+        }
+    }
+
+    @Test
     fun `an adult-only top level domain is a self-declaration`() {
         val result = classifier.classify(ContentInput(url = "https://something.xxx/"))
         assertTrue(result.score(Category.ADULT) > 0.7f)
