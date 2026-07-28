@@ -3,6 +3,7 @@ package com.aegis.app.service
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
+import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
 import android.text.TextUtils
@@ -23,6 +24,7 @@ import com.aegis.core.util.Urls
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -127,8 +129,9 @@ class AegisAccessibilityService : AccessibilityService() {
 
             AccessibilityEvent.TYPE_VIEW_SCROLLED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                // Content changes fire constantly; a URL check on every one would be a
-                // battery bug. Once a second is enough to catch a navigation.
+                // Content changes fire constantly; a check on every one would be a battery
+                // bug. The interval is short because this step is only an indexed view-id
+                // lookup — the expensive page walk downstream is rationed separately.
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastUrlScanAt >= URL_SCAN_INTERVAL_MILLIS) {
                     lastUrlScanAt = now
@@ -582,7 +585,7 @@ class AegisAccessibilityService : AccessibilityService() {
         val shown = activeOverlay?.show(
             decision = decision,
             target = target,
-            onClose = { performGlobalAction(GLOBAL_ACTION_HOME) },
+            onClose = { leaveOffendingPage() },
             grace = grace,
         ) ?: false
 
@@ -608,6 +611,118 @@ class AegisAccessibilityService : AccessibilityService() {
             )
         } catch (error: Exception) {
             engine.diagnostics.recordEnforcement("could not show a block screen for $target")
+        }
+    }
+
+    /**
+     * Put the page away properly when the block screen is closed.
+     *
+     * Closing used to mean nothing more than going to the home screen, which left the
+     * page loaded in the tab and — the case that actually matters — left what had been
+     * typed sitting in the search bar. Coming back to the browser put the user straight
+     * back where they were, one tap from the thing they had just been stopped from
+     * reaching. A block that you can undo by reopening the app you were already in is not
+     * much of a block.
+     *
+     * Three steps, in order:
+     *
+     * 1. **Empty the address bar.** A half-typed search is the state this was reported
+     *    from, and it survives everything else here — history has nothing to do with it.
+     * 2. **Walk back out of the page.** Bounded, and it stops early the moment there is
+     *    no web address on screen. In a tab opened from a link or a new-tab page there is
+     *    no history behind it, so the browser closes the tab outright.
+     * 3. **Then the home screen**, so the browser is not the thing in front when they
+     *    look down again.
+     *
+     * Deliberately bounded rather than "back until it works": an unbounded loop of back
+     * presses is indistinguishable from a stuck phone, and the point is to close a page,
+     * not to take the device away.
+     */
+    private fun leaveOffendingPage() {
+        scope.launch {
+            clearAddressField()
+            for (step in 0 until MAX_BACK_STEPS) {
+                if (!addressStillOnScreen()) break
+                performGlobalAction(GLOBAL_ACTION_BACK)
+                delay(BACK_STEP_MILLIS)
+            }
+            performGlobalAction(GLOBAL_ACTION_HOME)
+            // The next page deserves a fresh look rather than being compared against
+            // whatever was on screen when the block landed.
+            lastJudgedFingerprint = 0
+        }
+    }
+
+    /** Blank the address bar, so a half-typed search does not survive the block. */
+    private fun clearAddressField() {
+        val root = activeRoot() ?: return
+        try {
+            val field = editableAddressField(root) ?: return
+            val arguments = Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
+            }
+            field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+            @Suppress("DEPRECATION")
+            field.recycle()
+        } catch (error: Exception) {
+            // A field that will not take the action is not worth failing the close over.
+        } finally {
+            @Suppress("DEPRECATION")
+            root.recycle()
+        }
+    }
+
+    /**
+     * The editable address bar, by view id where the browser is known and by shape
+     * otherwise. Editable is the test that matters — a read-only node showing the URL is
+     * not something [AccessibilityNodeInfo.ACTION_SET_TEXT] can do anything with.
+     */
+    private fun editableAddressField(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val packageName = root.packageName?.toString()
+        val viewId = KNOWN_BROWSER_VIEW_IDS[packageName]
+        if (viewId != null) {
+            val byId = try {
+                root.findAccessibilityNodeInfosByViewId(viewId)
+            } catch (error: Exception) {
+                null
+            }
+            byId?.firstOrNull { it.isEditable }?.let { return it }
+        }
+
+        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
+        queue.add(root to 0)
+        var visited = 0
+        while (queue.isNotEmpty() && visited < MAX_NODES_SCANNED) {
+            val (node, depth) = queue.removeFirst()
+            visited++
+            if (node.isEditable && !TextUtils.isEmpty(node.text)) return node
+            if (depth < MAX_SCAN_DEPTH) {
+                for (index in 0 until node.childCount) {
+                    val child = try {
+                        node.getChild(index)
+                    } catch (error: Exception) {
+                        null
+                    } ?: continue
+                    queue.add(child to depth + 1)
+                }
+            }
+        }
+        return null
+    }
+
+    /** Whether a web address is still visible — the signal that we have not left yet. */
+    private fun addressStillOnScreen(): Boolean {
+        val root = activeRoot() ?: return false
+        return try {
+            val packageName = root.packageName?.toString().orEmpty()
+            if (packageName == this.packageName) return false
+            val url = addressFromKnownBrowser(root, packageName) ?: addressFromAnyTextNode(root)
+            !url.isNullOrBlank() && Urls.host(url).contains('.')
+        } catch (error: Exception) {
+            false
+        } finally {
+            @Suppress("DEPRECATION")
+            root.recycle()
         }
     }
 
@@ -659,6 +774,18 @@ class AegisAccessibilityService : AccessibilityService() {
         private const val HARVEST_INTERVAL_MILLIS = 600L
 
         private const val BLOCK_COOLDOWN_MILLIS = 2_500L
+
+        /**
+         * How far back to walk when the block screen is closed, and how long to leave
+         * between presses.
+         *
+         * Bounded on purpose. Three is enough to leave a results page and, in a tab with
+         * nothing behind it, to close the tab; more than that starts unwinding history
+         * the user has every right to keep, and an unbounded version is indistinguishable
+         * from a phone that has locked up.
+         */
+        private const val MAX_BACK_STEPS = 3
+        private const val BACK_STEP_MILLIS = 160L
         private const val MAX_NODES_SCANNED = 220
         private const val MAX_SCAN_DEPTH = 14
         private const val MAX_URL_LENGTH = 2_000
