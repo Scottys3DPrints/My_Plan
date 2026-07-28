@@ -177,16 +177,24 @@ requirement applies.
 ./tools/make-keystore.sh
 ```
 
-It creates the keystore and prints the four values to paste into
+It creates two files and tells you what to paste into
 **Settings → Secrets and variables → Actions**:
 
 | Secret | What it is |
 |---|---|
-| `AEGIS_KEYSTORE_BASE64` | the keystore file, base64-encoded |
+| `AEGIS_KEYSTORE_BASE64` | the whole contents of `aegis-release.jks.base64` |
 | `AEGIS_KEYSTORE_PASSWORD` | the password you chose |
 | `AEGIS_KEY_ALIAS` | `aegis` |
 | `AEGIS_KEY_PASSWORD` | the password you chose |
 
+A keystore is binary and a GitHub secret can only hold text, which is what the `.base64`
+file is for: the same key written as one line of roughly 5,000 characters. It wraps across
+the whole terminal and looks like many lines, so copy it from the file rather than by
+selecting it on screen — one dropped character fails the build with an error that does not
+say so. `xclip -selection clipboard < aegis-release.jks.base64` (or `pbcopy` on macOS,
+`termux-clipboard-set` on Termux) avoids the problem entirely.
+
+Delete the `.base64` file once the secret is saved; it is the signing key in another form.
 Keep the `.jks` file. Losing it means no more in-place updates, ever.
 
 ---

@@ -52,24 +52,37 @@ keytool -genkeypair \
   -keypass "$STORE_PASSWORD" \
   -dname "CN=Aegis, OU=Personal, O=Aegis, L=Unknown, ST=Unknown, C=GB"
 
+# Written to a file rather than only printed. It is one line of about five thousand
+# characters, which wraps across a whole screen and looks like many — selecting that by
+# hand is how this step usually goes wrong, and a single dropped character fails the build
+# with an error that does not say so.
+BASE64_FILE="$KEYSTORE.base64"
+{ base64 -w 0 "$KEYSTORE" 2>/dev/null || base64 "$KEYSTORE" | tr -d '\n'; } > "$BASE64_FILE"
+
 cat <<INSTRUCTIONS
 
 Created $KEYSTORE
+Created $BASE64_FILE ($(wc -c < "$BASE64_FILE" | tr -d ' ') characters, all on one line)
 
 Add these to the repository under Settings → Secrets and variables → Actions:
 
-  AEGIS_KEYSTORE_BASE64    the single line printed below
+  AEGIS_KEYSTORE_BASE64    the entire contents of $BASE64_FILE
   AEGIS_KEYSTORE_PASSWORD  the password you just chose
   AEGIS_KEY_ALIAS          $ALIAS
   AEGIS_KEY_PASSWORD       the password you just chose
 
-AEGIS_KEYSTORE_BASE64:
+To copy it without touching the terminal selection:
+
+  Linux    xclip -selection clipboard < $BASE64_FILE
+  macOS    pbcopy < $BASE64_FILE
+  Termux   termux-clipboard-set < $BASE64_FILE
+
+Or just open $BASE64_FILE in a text editor and select all.
+
+Delete $BASE64_FILE once the secret is saved. It is the signing key in another form,
+so it deserves the same care as the keystore itself.
 
 INSTRUCTIONS
-
-base64 -w 0 "$KEYSTORE" 2>/dev/null || base64 "$KEYSTORE" | tr -d '\n'
-echo
-echo
 
 cat <<'WARNING'
 Do not commit the .jks file. It is already covered by .gitignore.

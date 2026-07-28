@@ -13,6 +13,9 @@ captures/
 *.jks
 *.keystore
 keystore.properties
+# The base64 form of the keystore is still the keystore.
+*.base64
+*.b64
 
 # Build outputs
 *.apk
