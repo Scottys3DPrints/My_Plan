@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A shield. The name is Aegis; the icon should not need explaining. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFF3EFE9"
+        android:pathData="M54,28 L74,36 L74,54 C74,66 66,74 54,80 C42,74 34,66 34,54 L34,36 Z" />
+    <path
+        android:fillColor="#FF1F3A5F"
+        android:pathData="M54,36 L67,41 L67,54 C67,62 62,68 54,72 Z" />
+</vector>

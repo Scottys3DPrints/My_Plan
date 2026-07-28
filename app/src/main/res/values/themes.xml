@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="aegis_background">#FFF8F6F3</color>
+    <color name="aegis_ink">#FF1C1A17</color>
+    <color name="ic_launcher_background">#FF1F3A5F</color>
+
+    <style name="Theme.Aegis" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/aegis_background</item>
+        <item name="android:statusBarColor">@color/aegis_background</item>
+        <item name="android:navigationBarColor">@color/aegis_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

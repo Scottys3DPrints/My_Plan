@@ -1,0 +1,155 @@
+# Installing Aegis on your phone
+
+No Play Store, no developer account, no cable, no ADB. You download a file and tap it.
+
+---
+
+## 1. Get the APK
+
+### The easy way — a GitHub Release
+
+Push a tag and CI builds and publishes an installable APK:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+When the **Build APK** workflow finishes, the release page has an `aegis-…apk` attached.
+Open that page **in the phone's browser** and tap the file.
+
+### Or grab it from any build
+
+Every push to `main` or a `claude/**` branch also builds an APK. Open the repository on
+GitHub → **Actions** → the most recent **Build APK** run → **Artifacts** →
+`aegis-apk`.
+
+That artifact is a `.zip` (GitHub always zips artifacts). On the phone you will need to
+unzip it before the APK is tappable — any file manager will do. This is why a tagged
+release is the nicer route: releases attach the `.apk` directly, with nothing to unzip.
+
+### Or build it yourself
+
+Requires JDK 17 and the Android SDK:
+
+```bash
+./gradlew :app:assembleRelease
+# app/build/outputs/apk/release/app-release.apk
+```
+
+Transfer it to the phone however you like.
+
+---
+
+## 2. Install it
+
+1. Tap the `.apk`.
+2. Android asks whether to allow your browser (or file manager) to install unknown apps.
+   Say yes. This is a per-app permission, and you can turn it back off afterwards under
+   **Settings → Apps → Special app access → Install unknown apps**.
+3. Play Protect may warn that the app is unrecognised. It says that about every app not
+   distributed through the Play Store. Choose to install anyway.
+
+---
+
+## 3. Two permissions Aegis needs, and why
+
+Open Aegis. The Home screen shows both, and neither is on until you grant it.
+
+### Network filter (VPN)
+
+Tap the switch and accept Android's VPN prompt.
+
+It is a **local** VPN: the tunnel exists so DNS lookups can be inspected on the device,
+and nothing is sent anywhere for analysis. The persistent notification and the key icon in
+the status bar are Android's, and it shows them for every VPN — there is no way to
+suppress them, and you should be suspicious of any app that tries.
+
+One real limitation: Android allows only one VPN at a time. If you already use a VPN for
+privacy or work, you cannot run both.
+
+### App & route guard (accessibility service)
+
+This one needs an extra step on Android 13 and newer, **specifically because you
+sideloaded the app**:
+
+1. **Settings → Apps → Aegis → ⋮ (top right) → Allow restricted settings.**
+2. Then **Settings → Accessibility → Aegis app & route guard → On.**
+
+Without step 1, the toggle in step 2 is greyed out with no useful explanation. Android
+added the restriction to stop malware sideloaded by a scam caller from switching on an
+accessibility service, which is a good rule that also catches legitimate sideloaded apps
+like this one.
+
+The service reads which app is in the foreground (for app blocks and time budgets) and the
+address bar of other browsers (to catch a destination you asked never to reach, opened
+through someone else's in-app browser). It runs entirely on the device.
+
+### Usage access, optional
+
+**Settings → Apps → Special app access → Usage access → Aegis.** Improves the accuracy of
+time budgets. Aegis works without it.
+
+---
+
+## 4. Updating later
+
+Android installs an update over an existing app **only if both are signed by the same
+key**.
+
+- If you set up signing secrets (see below), every release is signed with your key and
+  updates install cleanly over each other.
+- If you did not, builds are signed with the Android debug key. Those still install, and
+  still update each other, but they are not upgradeable from or to a properly-signed build
+  — switching means uninstalling first, which erases your rules.
+
+Set signing up before you start relying on the app:
+
+```bash
+./tools/make-keystore.sh
+```
+
+It creates the keystore and prints the four values to paste into
+**Settings → Secrets and variables → Actions**:
+
+| Secret | What it is |
+|---|---|
+| `AEGIS_KEYSTORE_BASE64` | the keystore file, base64-encoded |
+| `AEGIS_KEYSTORE_PASSWORD` | the password you chose |
+| `AEGIS_KEY_ALIAS` | `aegis` |
+| `AEGIS_KEY_PASSWORD` | the password you chose |
+
+Keep the `.jks` file. Losing it means no more in-place updates, ever.
+
+---
+
+## Uninstalling
+
+**Settings → Apps → Aegis → Uninstall**, as usual — with two things to know first.
+
+Aegis will not stop you. A blocker that could refuse to be uninstalled would be
+indistinguishable from malware, and Android is right to make that impossible. The friction
+in this app is deliberately the kind you can walk out of; it is there to outlast an
+impulse, not to trap you.
+
+If the app & route guard is on, turn it off in Accessibility settings first — Android
+sometimes leaves the entry behind otherwise.
+
+---
+
+## Troubleshooting
+
+**"App not installed."** Usually a signature clash with an existing install. Uninstall the
+old one first.
+
+**The accessibility toggle is greyed out.** Do step 1 above — *Allow restricted settings*.
+
+**The filter switch turns itself off.** Another VPN is active. Only one can run at a time.
+
+**Some sites still load.** Expected, and worth understanding rather than treating as a
+bug. The network filter reads DNS. An app using its own encrypted resolver
+(DNS-over-HTTPS), or connecting straight to an IP address, never asks a question the
+filter can see. The Aegis browser filters those pages properly because it renders them
+itself, and the app guard catches other browsers by reading their address bar. Between
+them the coverage is good; it is not total, and the app says so rather than implying
+otherwise.

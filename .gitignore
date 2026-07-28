@@ -1,0 +1,19 @@
+*.iml
+.gradle/
+build/
+local.properties
+.idea/
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Signing material. Losing these means no more in-place updates; leaking them means
+# somebody else can sign an APK that installs over yours.
+*.jks
+*.keystore
+keystore.properties
+
+# Build outputs
+*.apk
+*.aab

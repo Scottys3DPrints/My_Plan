@@ -1,0 +1,304 @@
+package com.aegis.app.engine
+
+import android.content.Context
+import com.aegis.app.data.AegisStore
+import com.aegis.app.notify.PartnerNotifier
+import com.aegis.core.budget.BudgetKeys
+import com.aegis.core.budget.BudgetTracker
+import com.aegis.core.budget.GraceClaimResult
+import com.aegis.core.budget.GraceRequestResult
+import com.aegis.core.budget.UsageState
+import com.aegis.core.classifier.FeedbackLearner
+import com.aegis.core.classifier.LexicalClassifier
+import com.aegis.core.classifier.TermWeightOverrides
+import com.aegis.core.lockdown.ChangeOutcome
+import com.aegis.core.lockdown.CoolingOff
+import com.aegis.core.lockdown.PendingChange
+import com.aegis.core.log.Correction
+import com.aegis.core.log.LogEntry
+import com.aegis.core.log.TransparencyLog
+import com.aegis.core.model.Category
+import com.aegis.core.model.Classification
+import com.aegis.core.model.ContentInput
+import com.aegis.core.model.RouteContext
+import com.aegis.core.rules.Decision
+import com.aegis.core.rules.RuleSet
+import com.aegis.core.rules.RulesEngine
+import com.aegis.core.util.Clock
+import com.aegis.core.util.Urls
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+/**
+ * The application-scoped wiring of everything in `:core`.
+ *
+ * There is exactly one of these. The VPN service, the accessibility service, the browser
+ * and the UI all consult it, and it is the single place that owns "what the rules are
+ * right now" — which matters because those callers run on different threads and a
+ * disagreement between them would show up as a filter that blocks a page in one place and
+ * lets it through in another.
+ *
+ * State is exposed as [StateFlow]s so the UI can observe it and the services can read
+ * `.value` synchronously on whatever thread they happen to be on. Writes funnel through a
+ * mutex, because every one of them is a read-modify-write of persisted state.
+ */
+class AegisEngine private constructor(context: Context) {
+
+    private val appContext = context.applicationContext
+    private val store = AegisStore(appContext)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val writeLock = Mutex()
+
+    // Not the core's JVM default: on a device, monotonic time has to include deep sleep.
+    // See [AndroidClock].
+    private val clock: Clock = AndroidClock
+    private val tracker = BudgetTracker(clock)
+    private val coolingOff = CoolingOff(clock)
+    private val rulesEngine = RulesEngine(clock, tracker)
+    private val learner = FeedbackLearner()
+
+    private val _rules = MutableStateFlow(RuleSet.defaults())
+    val rules: StateFlow<RuleSet> = _rules.asStateFlow()
+
+    private val _usage = MutableStateFlow(UsageState())
+    val usage: StateFlow<UsageState> = _usage.asStateFlow()
+
+    private val _pending = MutableStateFlow<List<PendingChange>>(emptyList())
+    val pending: StateFlow<List<PendingChange>> = _pending.asStateFlow()
+
+    private val _overrides = MutableStateFlow(TermWeightOverrides.NONE)
+    val overrides: StateFlow<TermWeightOverrides> = _overrides.asStateFlow()
+
+    private val _log = MutableStateFlow(TransparencyLog())
+    val log: StateFlow<TransparencyLog> = _log.asStateFlow()
+
+    private val _onboardingComplete = MutableStateFlow(false)
+    val onboardingComplete: StateFlow<Boolean> = _onboardingComplete.asStateFlow()
+
+    /** Rebuilt whenever corrections change, so learning takes effect without a restart. */
+    @Volatile
+    private var classifier: LexicalClassifier = LexicalClassifier(clock = clock)
+
+    private var logSequence = 0L
+
+    init {
+        scope.launch { store.rules.collect { _rules.value = it } }
+        scope.launch { store.usage.collect { _usage.value = it } }
+        scope.launch { store.pendingChanges.collect { _pending.value = it } }
+        scope.launch { store.log.collect { _log.value = it } }
+        scope.launch { store.onboardingComplete.collect { _onboardingComplete.value = it } }
+        scope.launch {
+            store.overrides.collect {
+                _overrides.value = it
+                classifier = LexicalClassifier(overrides = it, clock = clock)
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- classification
+
+    fun classify(input: ContentInput): Classification = classifier.classify(input)
+
+    /**
+     * The full path for a page we rendered ourselves: classify, decide, log.
+     *
+     * Logging happens here rather than at each call site so that "why was this blocked?"
+     * can never be answered with "there is no record of that".
+     */
+    fun evaluatePage(input: ContentInput): EvaluatedPage {
+        val classification = classify(input)
+        val decision = rulesEngine.evaluateContent(input, classification, _rules.value, _usage.value)
+        val entryId = record(Urls.host(input.url), decision)
+        return EvaluatedPage(entryId, classification, decision)
+    }
+
+    /**
+     * The path for a hostname with no page content — a DNS question, or an address bar
+     * read out of somebody else's browser.
+     */
+    fun evaluateHost(host: String, route: RouteContext): EvaluatedPage {
+        val classification = classify(ContentInput(url = "https://$host", route = route))
+        val decision = rulesEngine.evaluateHost(host, route, _rules.value, _usage.value, classification)
+        val entryId = if (decision.isAllowed) null else record(host, decision)
+        return EvaluatedPage(entryId, classification, decision)
+    }
+
+    fun evaluateApp(packageName: String): Decision =
+        rulesEngine.evaluateApp(packageName, _rules.value, _usage.value)
+
+    fun effectiveMode(category: Category) = rulesEngine.effectiveMode(category, _rules.value)
+
+    // ------------------------------------------------------------------------ usage
+
+    /** Fold foreground time into the budgets. Called by the accessibility service. */
+    fun recordUsage(seconds: Int, packageName: String?, categories: Set<Category> = emptySet()) {
+        if (seconds <= 0) return
+        scope.launch {
+            writeLock.withLock {
+                val updated = tracker.record(_usage.value, _rules.value, seconds, packageName, categories)
+                _usage.value = updated
+                store.saveUsage(updated)
+            }
+        }
+    }
+
+    fun budgetKeyForApp(packageName: String): String = BudgetKeys.forPackage(packageName)
+
+    fun budgetKeyForCategory(category: Category): String = BudgetKeys.forCategory(category)
+
+    suspend fun requestGraceTap(key: String): GraceRequestResult = writeLock.withLock {
+        val result = tracker.requestGraceTap(_usage.value, _rules.value, key)
+        _usage.value = result.state
+        store.saveUsage(result.state)
+        result
+    }
+
+    suspend fun claimGraceTap(key: String): GraceClaimResult = writeLock.withLock {
+        val result = tracker.claimGraceTap(_usage.value, _rules.value, key)
+        _usage.value = result.state
+        store.saveUsage(result.state)
+        result
+    }
+
+    fun graceSecondsRemaining(key: String): Int = tracker.graceSecondsRemaining(_usage.value, key)
+
+    fun graceTapsRemaining(): Int = tracker.graceTapsRemaining(_usage.value, _rules.value)
+
+    // ------------------------------------------------------------------ rule changes
+
+    /**
+     * The only way rules ever change.
+     *
+     * Nothing else in the app writes to the rule set — every edit, from every screen,
+     * comes through here and is therefore subject to §3.6. If a future screen needs a
+     * shortcut, it does not get one.
+     */
+    suspend fun submitRuleChange(proposed: RuleSet, note: String = ""): ChangeOutcome = writeLock.withLock {
+        val current = _rules.value
+        val outcome = coolingOff.submit(current, proposed, idSeed = newId("change"), note = note)
+
+        _rules.value = outcome.appliedNow
+        store.saveRules(outcome.appliedNow)
+
+        outcome.queued?.let { queued ->
+            val updated = _pending.value + queued
+            _pending.value = updated
+            store.savePending(updated)
+
+            // §3.7: weakening a rule is exactly the moment a partner should hear about it.
+            current.partner?.let { partner ->
+                PartnerNotifier.notifyWeakening(appContext, partner, queued)
+            }
+        }
+        outcome
+    }
+
+    /** Apply anything whose delay has run out. Called on launch, on boot, and on resume. */
+    suspend fun applyDueChanges(): List<PendingChange> = writeLock.withLock {
+        val result = coolingOff.applyDue(_rules.value, _pending.value)
+        if (result.applied.isEmpty()) return@withLock emptyList()
+
+        _rules.value = result.rules
+        _pending.value = result.stillPending
+        store.saveRules(result.rules)
+        store.savePending(result.stillPending)
+        result.applied
+    }
+
+    suspend fun cancelPending(id: String) = writeLock.withLock {
+        val updated = coolingOff.cancel(_pending.value, id)
+        _pending.value = updated
+        store.savePending(updated)
+    }
+
+    fun minutesRemaining(change: PendingChange): Int = coolingOff.minutesRemaining(change)
+
+    fun previewChange(proposed: RuleSet) = coolingOff.diff(_rules.value, proposed)
+
+    // ------------------------------------------------------------ log and corrections
+
+    private fun record(host: String, decision: Decision): String {
+        val id = newId("log")
+        val entry = TransparencyLog.entryFor(id, clock.nowMillis(), host, decision)
+        scope.launch {
+            writeLock.withLock {
+                val updated = _log.value.record(entry)
+                _log.value = updated
+                store.saveLog(updated)
+            }
+        }
+        return id
+    }
+
+    fun noteProceededPastWarning(entryId: String) {
+        scope.launch {
+            writeLock.withLock {
+                val updated = _log.value.markProceeded(entryId)
+                _log.value = updated
+                store.saveLog(updated)
+            }
+        }
+    }
+
+    /**
+     * "This was wrong" (§3.10): record the correction and actually retrain.
+     */
+    suspend fun correct(entry: LogEntry, correction: Correction) = writeLock.withLock {
+        val category = entry.category
+        if (category != null) {
+            val updated = when (correction) {
+                Correction.FALSE_POSITIVE ->
+                    learner.correctFalsePositive(_overrides.value, category, entry.evidence)
+                Correction.MISSED ->
+                    learner.correctMiss(_overrides.value, category, text = entry.host, url = entry.host)
+            }
+            _overrides.value = updated
+            classifier = LexicalClassifier(overrides = updated, clock = clock)
+            store.saveOverrides(updated)
+        }
+
+        val log = _log.value.withCorrection(entry.id, correction)
+        _log.value = log
+        store.saveLog(log)
+    }
+
+    fun learnedAdjustments() = learner.describe(_overrides.value)
+
+    suspend fun resetLearning(category: Category) = writeLock.withLock {
+        val updated = learner.resetCategory(_overrides.value, category)
+        _overrides.value = updated
+        classifier = LexicalClassifier(overrides = updated, clock = clock)
+        store.saveOverrides(updated)
+    }
+
+    suspend fun completeOnboarding() = store.markOnboardingComplete()
+
+    private fun newId(prefix: String): String {
+        logSequence += 1
+        return "$prefix-${clock.nowMillis()}-$logSequence"
+    }
+
+    companion object {
+        @Volatile
+        private var instance: AegisEngine? = null
+
+        fun get(context: Context): AegisEngine =
+            instance ?: synchronized(this) {
+                instance ?: AegisEngine(context).also { instance = it }
+            }
+    }
+}
+
+data class EvaluatedPage(
+    /** Null when nothing was logged, which is the case for an ordinary allowed request. */
+    val logEntryId: String?,
+    val classification: Classification,
+    val decision: Decision,
+)
