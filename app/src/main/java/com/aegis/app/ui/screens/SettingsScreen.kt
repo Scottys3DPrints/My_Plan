@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aegis.app.BuildConfig
+import com.aegis.app.data.AegisStore
 import com.aegis.app.engine.AegisEngine
 import com.aegis.app.service.AegisAccessibilityService
 import com.aegis.app.update.UpdateCheck
@@ -404,6 +405,8 @@ fun SettingsScreen() {
 
         item {
             val observation by engine.diagnostics.state.collectAsState()
+            val updateOutcome by remember { AegisStore(context).lastUpdateGuardOutcome }
+                .collectAsState(initial = "")
             val guardOn = remember { AegisAccessibilityService.isConnected }
 
             Panel {
@@ -427,6 +430,14 @@ fun SettingsScreen() {
                 )
                 Spacer(Modifier.height(6.dp))
                 StatRow("Last block attempt", observation.lastEnforcement.ifBlank { "—" })
+                Spacer(Modifier.height(6.dp))
+                // Answers "does updating switch the guard off on this phone?" with an
+                // observation rather than an argument. Android's behaviour differs by
+                // version and manufacturer, so the only reliable source is this device.
+                StatRow(
+                    "Guard across last update",
+                    updateOutcome.ifBlank { "no update seen yet" },
+                )
                 Spacer(Modifier.height(6.dp))
                 StatRow(
                     "Page credited to",

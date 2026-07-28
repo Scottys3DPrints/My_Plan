@@ -364,6 +364,24 @@ looked at and blames that, and the counter tells you how often it had to correct
 If nothing else works, add the site under **Never reach**, which needs no classifier at
 all and is enforced by DNS as well as the guard.
 
-**Note:** the guard must be re-enabled in Android's Accessibility settings after an
-update that changes what it asks for. Toggle it off and on if diagnostics say it is not
-seeing anything.
+### After an update: the guard may be switched off, silently
+
+Android applies "restricted settings" to apps installed outside the Play Store, and an
+accessibility service can be turned off as a side effect of an install. Android says
+nothing when this happens. That makes it the worst failure this app can have: everything
+looks right, the rules are all still there, the Record has entries — last week's entries.
+
+**There is no way for an app to waive this.** That is the point of the restriction; an app
+that could opt out would be exactly the app it exists to stop. So Aegis does the only
+honest thing available instead:
+
+- It remembers whether the guard was on before the update, checks after, and says so in
+  red on the Home screen if it was switched off — rather than leaving you to notice.
+- The Home screen offers **both** settings screens by name, numbered. People reliably end
+  up on the wrong one: the switch you want is in Accessibility settings, greyed out, and
+  nothing on that screen mentions that the reason lives behind a ⋮ menu somewhere else.
+- **Settings → Diagnostics → Guard across last update** records what actually happened on
+  *this* phone. Android's behaviour here varies by version and manufacturer, so one
+  observation from your device beats any general claim, including mine.
+
+If it did survive, you need to do nothing at all — and the diagnostics row will say so.

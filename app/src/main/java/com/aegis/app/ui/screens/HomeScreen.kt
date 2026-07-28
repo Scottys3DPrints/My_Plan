@@ -1,8 +1,6 @@
 package com.aegis.app.ui.screens
 
-import android.content.Intent
 import android.net.VpnService
-import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -35,7 +33,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.aegis.app.engine.AegisEngine
+import com.aegis.app.data.AegisStore
 import com.aegis.app.service.AegisAccessibilityService
+import com.aegis.app.update.GuardAfterUpdate
 import com.aegis.app.service.AegisVpnService
 import com.aegis.app.ui.components.BudgetBar
 import com.aegis.app.ui.components.Eyebrow
@@ -46,6 +46,7 @@ import com.aegis.app.ui.components.Seal
 import com.aegis.app.ui.components.StatRow
 import com.aegis.app.ui.theme.Ash
 import com.aegis.app.ui.theme.Brass
+import com.aegis.app.ui.theme.Rust
 import com.aegis.core.rules.FocusSession
 import com.aegis.core.util.LocalTime
 import kotlinx.coroutines.delay
@@ -107,6 +108,13 @@ fun HomeScreen(
             1f - (engine.minutesRemaining(change).toFloat() / total).coerceIn(0f, 1f)
         }
     }
+
+    // Checked once, on open, before anything is recorded — see GuardAfterUpdate.
+    var lostToUpdate by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        lostToUpdate = GuardAfterUpdate.check(context, AegisStore(context)).lostToUpdate
+    }
+    if (guardEnabled) lostToUpdate = false
 
     val protectionIncomplete = !filterRunning || !guardEnabled
 
@@ -208,22 +216,38 @@ fun HomeScreen(
                     }
 
                     if (!guardEnabled) {
+                        if (lostToUpdate) {
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                text = "The update switched this off. Android does that to " +
+                                    "apps installed outside the Play Store, and it tells " +
+                                    "nobody — so nothing has been filtered since.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Rust,
+                            )
+                        }
+
                         Spacer(Modifier.height(12.dp))
                         OutlinedButton(
-                            onClick = {
-                                context.startActivity(
-                                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                                )
-                            },
+                            onClick = { GuardAfterUpdate.openAccessibilitySettings(context) },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text("Turn on the app & route guard")
+                            Text("1. Open Accessibility settings")
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        // A button of its own rather than a sentence, because the switch
+                        // you want is on the *other* screen, greyed out, with nothing on
+                        // it saying the reason lives in a menu somewhere else entirely.
+                        OutlinedButton(
+                            onClick = { GuardAfterUpdate.openAppInfo(context) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("2. Greyed out? Open Aegis app info")
                         }
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "Greyed out? Settings › Apps › Aegis › ⋮ › Allow restricted " +
-                                "settings, then come back.",
+                            text = "On that page: ⋮ (top right) › Allow restricted settings. " +
+                                "Then back to step 1.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Ash,
                         )

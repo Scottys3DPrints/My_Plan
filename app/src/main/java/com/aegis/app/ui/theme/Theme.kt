@@ -31,7 +31,12 @@ import androidx.compose.ui.unit.sp
  * the seal, a locked rule, the time you are made to wait — is brass. Not red. A blocker
  * that shouts in warning colours reads as an accusation, and an accusing tool gets
  * uninstalled; the refusals here carry their weight in words and in typography instead.
- * Rust appears in exactly one place, the mark on the block screen, and nowhere else.
+ * Rust appears in exactly two places: the mark on the block screen, and the line that
+ * says the guard was silently switched off by an update. The second one is not a warning
+ * about the user's behaviour — it is the app admitting it has not been doing its job, and
+ * that is the one message here that must not be politely coloured. It is also the only
+ * failure the app has that is completely invisible from the outside: everything looks
+ * right, and the Record is showing last week.
  *
  * **Three type roles, each doing one job.** A serif for judgments and headings, because
  * almost nothing on Android uses one and it stops the app reading as a settings page. A

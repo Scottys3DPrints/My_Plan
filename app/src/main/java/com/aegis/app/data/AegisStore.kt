@@ -78,6 +78,42 @@ class AegisStore(private val context: Context) {
     suspend fun setLastUpdateCheck(millis: Long) =
         write(KEY_LAST_UPDATE_CHECK, millis.toString())
 
+    /**
+     * What the guard's state was the last time this app version ran.
+     *
+     * Exists to answer one question a user cannot answer for themselves: *did the update
+     * switch the guard off, or was it already off?* Android gives no notice either way, so
+     * without this the failure is completely silent — the app looks fine, the switch on
+     * the Home screen looks like something you forgot to do weeks ago, and nothing has
+     * been filtered since Tuesday.
+     */
+    val lastRunVersionCode: Flow<Long> = context.dataStore.data.map { preferences ->
+        preferences[KEY_LAST_RUN_VERSION]?.toLongOrNull() ?: 0L
+    }
+
+    val guardOnAtLastRun: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[KEY_GUARD_WAS_ON] == "yes"
+    }
+
+    /**
+     * What happened to the guard across the last version change.
+     *
+     * Kept so the question "does updating switch it off on *this* phone?" stops being
+     * something anyone has to remember. Android's behaviour here differs by version and
+     * by manufacturer, and one recorded observation beats an argument about it.
+     */
+    val lastUpdateGuardOutcome: Flow<String> = context.dataStore.data.map { preferences ->
+        preferences[KEY_UPDATE_GUARD_OUTCOME].orEmpty()
+    }
+
+    suspend fun recordRun(versionCode: Long, guardEnabled: Boolean) {
+        write(KEY_LAST_RUN_VERSION, versionCode.toString())
+        write(KEY_GUARD_WAS_ON, if (guardEnabled) "yes" else "no")
+    }
+
+    suspend fun recordUpdateGuardOutcome(outcome: String) =
+        write(KEY_UPDATE_GUARD_OUTCOME, outcome)
+
     suspend fun saveRules(value: RuleSet) = write(KEY_RULES, json.encodeToString(RuleSet.serializer(), value))
 
     suspend fun savePending(value: List<PendingChange>) =
@@ -115,5 +151,8 @@ class AegisStore(private val context: Context) {
         val KEY_ONBOARDING = stringPreferencesKey("onboarding")
         val KEY_UPDATE_CHECKS = stringPreferencesKey("update_checks")
         val KEY_LAST_UPDATE_CHECK = stringPreferencesKey("last_update_check")
+        val KEY_LAST_RUN_VERSION = stringPreferencesKey("last_run_version")
+        val KEY_GUARD_WAS_ON = stringPreferencesKey("guard_was_on")
+        val KEY_UPDATE_GUARD_OUTCOME = stringPreferencesKey("update_guard_outcome")
     }
 }
