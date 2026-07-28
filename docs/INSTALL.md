@@ -122,8 +122,23 @@ still waiting.
 
 ## 5. Updating without redownloading every time
 
-Once signing is set up, Aegis updates itself: it checks GitHub Releases once a day and,
-when there's a newer build, offers **Download and install** in Settings. One tap.
+Once signing is set up **and you have published a release**, Aegis updates itself: it
+checks GitHub Releases once a day and, when there's a newer build, offers **Download and
+install** in Settings. One tap.
+
+Both halves of that sentence matter. The updater watches **Releases**, not Actions runs —
+Actions artifacts are zipped and need a logged-in GitHub session to download, so they
+cannot be fetched by an app. Until you push a version tag there is genuinely nothing for it
+to find, and it will say so:
+
+> No releases have been published yet, so there is nothing to update to.
+
+Publish one with:
+
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+```
 
 Android will not let any app install silently unless it is a system app or an enterprise
 device owner, so the final confirmation dialog is unavoidable — and for a tool like this
@@ -213,7 +228,13 @@ them the coverage is good; it is not total, and the app says so rather than impl
 otherwise.
 
 **"App not installed" when updating.** The two builds are signed with different keys. See
-*Signing is a hard prerequisite* above.
+*Signing is a hard prerequisite* above. Settings → Updates shows the key your build was
+signed with, and warns you outright if it is the debug key.
+
+**"Check now" says there is nothing new, but there is.** Check what it actually said. "You
+are on the latest release" means a release exists and is not newer. "No releases have been
+published yet" means the repository has never been tagged — Actions builds are not releases
+and the app cannot download them. Push a version tag to publish one.
 
 ---
 

@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aegis.app.BuildConfig
 import com.aegis.app.engine.AegisEngine
+import com.aegis.app.update.UpdateCheck
 import com.aegis.app.update.Updater
 import com.aegis.app.ui.components.Eyebrow
 import com.aegis.app.ui.components.Focus
@@ -227,6 +228,7 @@ fun SettingsScreen() {
         item {
             val update by engine.updateAvailable.collectAsState()
             val checksOn by engine.updateChecksEnabled.collectAsState()
+            val signing = remember { Updater.signingIdentity(context) }
             var status by remember { mutableStateOf("") }
             var busy by remember { mutableStateOf(false) }
 
@@ -237,10 +239,9 @@ fun SettingsScreen() {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Check for updates daily", fontWeight = FontWeight.Medium)
+                        Text("Check daily", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            text = "One request to github.com for the latest release. Nothing " +
-                                "about you or what you browse is sent.",
+                            text = "One request to github.com. Nothing about you is sent.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Ash,
                         )
@@ -251,18 +252,22 @@ fun SettingsScreen() {
                     )
                 }
 
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(14.dp))
                 StatRow("Installed", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                if (signing.fingerprint.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    StatRow("Signed with", signing.fingerprint)
+                }
 
                 val available = update
                 if (available != null) {
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(14.dp))
                     Text(
                         text = "Version ${available.versionName} is available" +
                             if (available.readableSize.isNotBlank()) " (${available.readableSize})." else ".",
-                        fontWeight = FontWeight.Medium,
+                        style = MaterialTheme.typography.titleMedium,
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(10.dp))
                     Button(
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !busy,
@@ -287,53 +292,71 @@ fun SettingsScreen() {
                     ) {
                         Text(if (busy) status.ifBlank { "Working…" } else "Download and install")
                     }
-                    if (!Updater.canRequestInstall(context)) {
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = "Android will ask you to allow Aegis to install apps first. " +
-                                "It always shows its own confirmation — nothing installs silently.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Ash,
-                        )
-                    }
                 } else {
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(
-                            enabled = !busy,
-                            onClick = {
-                                scope.launch {
-                                    busy = true
-                                    status = "Checking…"
-                                    val found = engine.checkForUpdate(force = true)
-                                    busy = false
-                                    status = if (found == null) "You're on the latest build." else ""
+                    Spacer(Modifier.height(14.dp))
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !busy,
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                status = "Checking…"
+                                // Each outcome says something different. Reporting them all
+                                // as "you are up to date" is how this screen used to lie.
+                                status = when (val result = engine.checkForUpdate(force = true)) {
+                                    is UpdateCheck.Available -> ""
+                                    UpdateCheck.UpToDate -> "You are on the latest release."
+                                    UpdateCheck.NoReleases ->
+                                        "No releases have been published yet, so there is " +
+                                            "nothing to update to. Builds sit in GitHub Actions " +
+                                            "until a version tag is pushed."
+                                    is UpdateCheck.NoInstaller ->
+                                        "Release ${result.tag} exists but has no APK attached yet."
+                                    is UpdateCheck.Failed -> result.reason
                                 }
-                            },
-                        ) {
-                            Text("Check now")
-                        }
+                                busy = false
+                            }
+                        },
+                    ) {
+                        Text("Check now")
                     }
                 }
 
                 if (status.isNotBlank()) {
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(10.dp))
                     Text(
                         text = status,
                         style = MaterialTheme.typography.bodySmall,
                         color = Ash,
                     )
                 }
+            }
+        }
 
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    text = "Updates only install if they are signed with the same key as the " +
-                        "build you have. If you did not set up a signing key, every build is " +
-                        "signed with a throwaway one and updates will be refused — see " +
-                        "docs/INSTALL.md.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Ash,
-                )
+        // Surfaced as its own panel because it is not advice — it decides whether the
+        // button above can ever succeed.
+        if (Updater.signingIdentity(context).isDebugKey) {
+            item {
+                Focus {
+                    Text("Updates cannot install", style = MaterialTheme.typography.titleLarge)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "This build is signed with Android's debug key, which is " +
+                            "generated fresh on every build machine. Android only accepts an " +
+                            "update signed with the same key as the installed app, so any " +
+                            "update found here would fail at the final dialog.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Ash,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "Fix it once by running tools/make-keystore.sh and adding the " +
+                            "four secrets to the repository. Every build after that shares " +
+                            "your key and updates land in place.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Ash,
+                    )
+                }
             }
         }
 

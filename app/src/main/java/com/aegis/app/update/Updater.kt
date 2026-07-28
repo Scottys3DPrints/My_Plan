@@ -117,6 +117,56 @@ object Updater {
         }
     }
 
+    /**
+     * Who signed the installed app.
+     *
+     * Worth surfacing because it decides whether updating is possible at all. Android will
+     * only install an update signed with the same key, and a build made without signing
+     * secrets falls back to Android's debug key — which is generated at random on each
+     * fresh CI machine. Two such builds cannot replace each other, so the updater would
+     * download a file that fails at the final dialog with an unhelpful "App not installed".
+     *
+     * Better to say so on the settings screen than to let someone discover it at the end
+     * of a download. The fingerprint is shown too, so it can be compared against the one
+     * CI prints for the build being offered.
+     */
+    fun signingIdentity(context: Context): SigningIdentity {
+        return try {
+            val manager = context.packageManager
+            val bytes: ByteArray = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val info = manager.getPackageInfo(
+                    context.packageName,
+                    android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES,
+                )
+                info.signingInfo?.apkContentsSigners?.firstOrNull()?.toByteArray()
+            } else {
+                @Suppress("DEPRECATION")
+                val info = manager.getPackageInfo(
+                    context.packageName,
+                    android.content.pm.PackageManager.GET_SIGNATURES,
+                )
+                @Suppress("DEPRECATION")
+                info.signatures?.firstOrNull()?.toByteArray()
+            } ?: return SigningIdentity(isDebugKey = false, fingerprint = "")
+
+            val certificate = java.security.cert.CertificateFactory.getInstance("X.509")
+                .generateCertificate(java.io.ByteArrayInputStream(bytes))
+                as java.security.cert.X509Certificate
+
+            val subject = certificate.subjectX500Principal.name
+            val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+            val fingerprint = digest.take(6).joinToString(":") { "%02X".format(it) }
+
+            SigningIdentity(
+                isDebugKey = subject.contains("Android Debug", ignoreCase = true),
+                fingerprint = fingerprint,
+            )
+        } catch (error: Exception) {
+            Log.w(TAG, "could not read the signing certificate", error)
+            SigningIdentity(isDebugKey = false, fingerprint = "")
+        }
+    }
+
     fun canRequestInstall(context: Context): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.packageManager.canRequestPackageInstalls()
@@ -136,3 +186,15 @@ object Updater {
         }
     }
 }
+
+/**
+ * The key the installed build was signed with.
+ *
+ * [isDebugKey] true means in-place updates are impossible: that key is generated fresh on
+ * every build machine, so no two builds share it.
+ */
+data class SigningIdentity(
+    val isDebugKey: Boolean,
+    /** First six bytes of the SHA-256, matching what CI prints. Empty if unreadable. */
+    val fingerprint: String,
+)

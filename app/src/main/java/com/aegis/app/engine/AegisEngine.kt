@@ -5,6 +5,7 @@ import com.aegis.app.data.AegisStore
 import com.aegis.app.notify.PartnerNotifier
 import com.aegis.app.service.CriticalPackages
 import com.aegis.app.update.AvailableUpdate
+import com.aegis.app.update.UpdateCheck
 import com.aegis.app.update.UpdateChecker
 import com.aegis.core.budget.BudgetKeys
 import com.aegis.core.budget.BudgetTracker
@@ -386,19 +387,19 @@ class AegisEngine private constructor(context: Context) {
      * [force] bypasses both the opt-out and the once-a-day throttle, for the "Check now"
      * button — an explicit tap is a request, not background chatter.
      */
-    suspend fun checkForUpdate(force: Boolean = false): AvailableUpdate? {
-        if (!force && !_updateChecksEnabled.value) return null
+    suspend fun checkForUpdate(force: Boolean = false): UpdateCheck {
+        if (!force && !_updateChecksEnabled.value) return UpdateCheck.UpToDate
         if (!force) {
             val last = lastUpdateCheck
             if (last > 0 && clock.nowMillis() - last < UPDATE_CHECK_INTERVAL_MILLIS) {
-                return _updateAvailable.value
+                return _updateAvailable.value?.let { UpdateCheck.Available(it) } ?: UpdateCheck.UpToDate
             }
         }
-        val found = withContext(Dispatchers.IO) { UpdateChecker.check(appContext) }
+        val result = withContext(Dispatchers.IO) { UpdateChecker.check(appContext) }
         lastUpdateCheck = clock.nowMillis()
         store.setLastUpdateCheck(lastUpdateCheck)
-        _updateAvailable.value = found
-        return found
+        _updateAvailable.value = (result as? UpdateCheck.Available)?.update
+        return result
     }
 
     @Volatile

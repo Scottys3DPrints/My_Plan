@@ -44,22 +44,40 @@ object UpdateChecker {
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
-     * @return the newer release, or null if the check failed or we are already current.
+     * Look for a newer build, and say precisely what was found.
+     *
+     * The outcomes are separate types on purpose. An earlier version returned null for
+     * every one of "you are current", "nothing has ever been published" and "the network
+     * failed", and the screen rendered all three as *You're on the latest build* — a
+     * confident, reassuring, and sometimes false statement. In an app whose whole claim is
+     * that it does not overstate what it covers, that is the worst class of bug there is:
+     * it is wrong in the direction that stops you looking any further.
      */
-    fun check(context: Context): AvailableUpdate? {
-        val release = fetchLatestRelease() ?: return null
-        val asset = release.apkAsset ?: return null
+    fun check(context: Context): UpdateCheck {
+        val response = fetchLatestRelease()
+
+        val release = when (response) {
+            is ReleaseResponse.Found -> response.release
+            ReleaseResponse.None -> return UpdateCheck.NoReleases
+            is ReleaseResponse.Failed -> return UpdateCheck.Failed(response.reason)
+        }
+
+        val asset = release.apkAsset ?: return UpdateCheck.NoInstaller(release.tag)
 
         val installedCode = installedVersionCode(context)
-        if (asset.versionCode != null && asset.versionCode <= installedCode) return null
-        if (asset.versionCode == null && release.tag.trimStart('v') == BuildConfig.VERSION_NAME) return null
+        if (asset.versionCode != null && asset.versionCode <= installedCode) return UpdateCheck.UpToDate
+        if (asset.versionCode == null && release.tag.trimStart('v') == BuildConfig.VERSION_NAME) {
+            return UpdateCheck.UpToDate
+        }
 
-        return AvailableUpdate(
-            versionName = release.tag.trimStart('v'),
-            versionCode = asset.versionCode,
-            downloadUrl = asset.url,
-            sizeBytes = asset.size,
-            notes = release.notes,
+        return UpdateCheck.Available(
+            AvailableUpdate(
+                versionName = release.tag.trimStart('v'),
+                versionCode = asset.versionCode,
+                downloadUrl = asset.url,
+                sizeBytes = asset.size,
+                notes = release.notes,
+            ),
         )
     }
 
@@ -75,7 +93,7 @@ object UpdateChecker {
         0L
     }
 
-    private fun fetchLatestRelease(): Release? {
+    private fun fetchLatestRelease(): ReleaseResponse {
         var connection: HttpURLConnection? = null
         return try {
             val url = URL("https://api.github.com/repos/${BuildConfig.UPDATE_REPO}/releases/latest")
@@ -85,17 +103,29 @@ object UpdateChecker {
                 setRequestProperty("Accept", "application/vnd.github+json")
                 setRequestProperty("User-Agent", "Aegis")
             }
-            // 404 is the normal answer when no release has been published yet.
-            if (connection.responseCode !in 200..299) return null
+            val code = connection.responseCode
+            // 404 is not an error — it is what GitHub says when the repository has no
+            // releases at all, which is the normal state until the first tag is pushed.
+            if (code == 404) return ReleaseResponse.None
+            if (code == 403) return ReleaseResponse.Failed("GitHub is rate-limiting this check.")
+            if (code !in 200..299) return ReleaseResponse.Failed("GitHub replied $code.")
 
             val body = connection.inputStream.bufferedReader().use { it.readText() }
-            parseRelease(json.parseToJsonElement(body).jsonObject)
+            val parsed = parseRelease(json.parseToJsonElement(body).jsonObject)
+                ?: return ReleaseResponse.Failed("Could not read the release.")
+            ReleaseResponse.Found(parsed)
         } catch (error: Exception) {
             Log.d(TAG, "update check failed", error)
-            null
+            ReleaseResponse.Failed("No connection.")
         } finally {
             connection?.disconnect()
         }
+    }
+
+    private sealed interface ReleaseResponse {
+        data class Found(val release: Release) : ReleaseResponse
+        data object None : ReleaseResponse
+        data class Failed(val reason: String) : ReleaseResponse
     }
 
     private fun parseRelease(root: JsonObject): Release? {
@@ -130,8 +160,8 @@ object UpdateChecker {
     private fun kotlinx.serialization.json.JsonPrimitive.contentOrNullSafe(): String? =
         runCatching { content }.getOrNull()?.takeIf { it.isNotBlank() && it != "null" }
 
-    private data class Release(val tag: String, val notes: String, val apkAsset: ApkAsset?)
-    private data class ApkAsset(val url: String, val size: Long, val versionCode: Long?)
+    internal data class Release(val tag: String, val notes: String, val apkAsset: ApkAsset?)
+    internal data class ApkAsset(val url: String, val size: Long, val versionCode: Long?)
 }
 
 data class AvailableUpdate(
@@ -143,4 +173,20 @@ data class AvailableUpdate(
 ) {
     val readableSize: String
         get() = if (sizeBytes <= 0) "" else "${(sizeBytes / (1024.0 * 1024.0)).let { "%.1f".format(it) }} MB"
+}
+
+/** What a check actually found. Each outcome says something different to the user. */
+sealed interface UpdateCheck {
+    data class Available(val update: AvailableUpdate) : UpdateCheck
+
+    /** A release exists and it is not newer than what is installed. */
+    data object UpToDate : UpdateCheck
+
+    /** The repository has never published a release. Nothing is wrong; nothing is there. */
+    data object NoReleases : UpdateCheck
+
+    /** A release exists but carries no APK — usually a tag pushed before CI finished. */
+    data class NoInstaller(val tag: String) : UpdateCheck
+
+    data class Failed(val reason: String) : UpdateCheck
 }
