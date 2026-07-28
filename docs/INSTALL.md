@@ -114,18 +114,43 @@ still waiting.
 
 ---
 
-## 5. Updating later
+## 5. Updating without redownloading every time
 
-Android installs an update over an existing app **only if both are signed by the same
-key**.
+Once signing is set up, Aegis updates itself: it checks GitHub Releases once a day and,
+when there's a newer build, offers **Download and install** in Settings. One tap.
 
-- If you set up signing secrets (see below), every release is signed with your key and
-  updates install cleanly over each other.
-- If you did not, builds are signed with the Android debug key. Those still install, and
-  still update each other, but they are not upgradeable from or to a properly-signed build
-  — switching means uninstalling first, which erases your rules.
+Android will not let any app install silently unless it is a system app or an enterprise
+device owner, so the final confirmation dialog is unavoidable — and for a tool like this
+that is the right outcome, not a limitation to route around. What you avoid is the
+downloading, unzipping and file-hunting.
 
-Set signing up before you start relying on the app:
+The first time, Android asks you to allow Aegis to install apps
+(**Settings → Apps → Aegis → Install unknown apps**). After that it's tap-tap.
+
+You can turn the daily check off in **Settings → Updates**. It is one unauthenticated GET
+to `api.github.com` and sends nothing about you — but it is the only request Aegis makes
+that you did not ask for, so it gets a switch.
+
+### Signing is a hard prerequisite, not a nicety
+
+Android installs an update over an existing app **only if both are signed with the same
+key**. Without the signing secrets configured, each build falls back to Android's debug
+key — and because every CI run starts on a fresh machine, that key is **randomly generated
+per build**. Two such builds cannot update each other at all; you would get
+*"App not installed"* every time and have to uninstall first, losing your rules.
+
+You can verify this yourself: every build prints its certificate fingerprint in the
+**Report signing identity** step of the workflow. Without secrets it differs run to run.
+With secrets it is identical every time.
+
+### Alternative: Obtainium
+
+If you'd rather not have the app update itself, [Obtainium](https://github.com/ImranR98/Obtainium)
+is an open-source app that watches GitHub Releases and handles updates for sideloaded
+apps. Point it at this repository and it will notify you and install. Same signing
+requirement applies.
+
+### Setting up the key
 
 ```bash
 ./tools/make-keystore.sh
@@ -180,3 +205,37 @@ filter can see. The Aegis browser filters those pages properly because it render
 itself, and the app guard catches other browsers by reading their address bar. Between
 them the coverage is good; it is not total, and the app says so rather than implying
 otherwise.
+
+**"App not installed" when updating.** The two builds are signed with different keys. See
+*Signing is a hard prerequisite* above.
+
+---
+
+## Does it block sites in Chrome?
+
+Yes — by two independent routes, with one setting you should change.
+
+**The DNS filter** covers every app on the phone, Chrome included. When Chrome looks up a
+blocked hostname, Aegis answers with an unroutable address and the page fails to load.
+
+**The app & route guard** reads Chrome's address bar and holds it to the same destination
+rules and hostname classification as the Aegis browser. If a blocked site loads, Aegis
+takes you back and shows why. This path works even when DNS filtering does not.
+
+### Turn off Chrome's Secure DNS
+
+Chrome can send its lookups over its own encrypted connection (DNS-over-HTTPS), which
+routes straight past the DNS filter. Turn it off so both routes work:
+
+**Chrome → ⋮ → Settings → Privacy and security → Use secure DNS → off.**
+
+The guard still catches things without this, but the DNS filter is the faster and quieter
+of the two — it stops the page before it loads rather than after.
+
+### What Chrome does *not* get
+
+Full content classification. In the Aegis browser, Aegis renders the page and can read its
+text, metadata and images — so a brand-new site with no recognisable name is still judged
+on what it contains, and individual images can be blurred on a page that is otherwise
+fine. In Chrome, Aegis only ever sees the hostname. That is the honest difference, and it
+is why the built-in browser exists.

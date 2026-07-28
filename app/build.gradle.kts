@@ -44,9 +44,17 @@ android {
         applicationId = "com.aegis.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+
+        // Supplied by CI so the code climbs monotonically across builds. Android refuses
+        // to install an update whose versionCode is lower than the installed one, so a
+        // fixed value here would make in-place updates fail after the first release.
+        versionCode = (System.getenv("AEGIS_VERSION_CODE") ?: "1").toIntOrNull() ?: 1
+        versionName = System.getenv("AEGIS_VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "0.1.0"
+
         vectorDrawables.useSupportLibrary = true
+
+        // Where the in-app updater looks. Change this if you fork the repository.
+        buildConfigField("String", "UPDATE_REPO", "\"Scottys3DPrints/My_Plan\"")
     }
 
     signingConfigs {

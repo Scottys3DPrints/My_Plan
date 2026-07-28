@@ -28,14 +28,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.aegis.app.BuildConfig
 import com.aegis.app.engine.AegisEngine
+import com.aegis.app.update.Updater
 import com.aegis.app.ui.components.AegisCard
 import com.aegis.app.ui.components.Explanation
 import com.aegis.app.ui.components.LabelledRow
 import com.aegis.app.ui.components.SectionHeader
 import com.aegis.core.rules.AccountabilityPartner
 import com.aegis.core.util.LocalTime
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The self-binding controls (§3.6, §3.7), plus what the classifier has learned.
@@ -203,6 +207,126 @@ fun SettingsScreen() {
                     text = "Aegis prepares the message and hands it to your own mail or messaging " +
                         "app to send. It has no server of its own, and nothing about what you " +
                         "browse is ever included — only the fact that a rule was weakened.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        item {
+            SectionHeader(
+                title = "Updates",
+                subtitle = "Aegis is not in a store, so it looks for its own updates.",
+            )
+        }
+
+        item {
+            val update by engine.updateAvailable.collectAsState()
+            val checksOn by engine.updateChecksEnabled.collectAsState()
+            var status by remember { mutableStateOf("") }
+            var busy by remember { mutableStateOf(false) }
+
+            AegisCard(highlighted = update != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Check for updates daily", fontWeight = FontWeight.Medium)
+                        Text(
+                            text = "One request to github.com for the latest release. Nothing " +
+                                "about you or what you browse is sent.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = checksOn,
+                        onCheckedChange = { on -> scope.launch { engine.setUpdateChecksEnabled(on) } },
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+                LabelledRow("Installed", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+
+                val available = update
+                if (available != null) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = "Version ${available.versionName} is available" +
+                            if (available.readableSize.isNotBlank()) " (${available.readableSize})." else ".",
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !busy,
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                status = "Downloading…"
+                                val file = withContext(Dispatchers.IO) {
+                                    Updater.download(context, available) { percent ->
+                                        status = "Downloading… $percent%"
+                                    }
+                                }
+                                busy = false
+                                if (file == null) {
+                                    status = "Download failed. Try again later."
+                                } else {
+                                    status = ""
+                                    Updater.install(context, file)
+                                }
+                            }
+                        },
+                    ) {
+                        Text(if (busy) status.ifBlank { "Working…" } else "Download and install")
+                    }
+                    if (!Updater.canRequestInstall(context)) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = "Android will ask you to allow Aegis to install apps first. " +
+                                "It always shows its own confirmation — nothing installs silently.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else {
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
+                            enabled = !busy,
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    status = "Checking…"
+                                    val found = engine.checkForUpdate(force = true)
+                                    busy = false
+                                    status = if (found == null) "You're on the latest build." else ""
+                                }
+                            },
+                        ) {
+                            Text("Check now")
+                        }
+                    }
+                }
+
+                if (status.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = status,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = "Updates only install if they are signed with the same key as the " +
+                        "build you have. If you did not set up a signing key, every build is " +
+                        "signed with a throwaway one and updates will be refused — see " +
+                        "docs/INSTALL.md.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

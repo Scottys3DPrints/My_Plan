@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!--
+      Only the update download directory is shared, and only from internal cache. Nothing
+      else this app stores — rules, usage, the transparency log — is reachable through the
+      provider.
+    -->
+    <cache-path
+        name="updates"
+        path="updates/" />
+</paths>

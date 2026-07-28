@@ -30,6 +30,7 @@ browse never leaves the phone — see [Privacy](#privacy) for what that means co
 | **Cooling-off** | Once locked in: strengthening a rule applies instantly, weakening one waits 24 hours. Including unlocking, and including the setting that controls the wait. |
 | **Accountability partner** | Optionally tell someone when you try to weaken your own rules. |
 | **Transparency log** | Every block, with its evidence, and a one-tap "this was wrong" that actually retrains the local model. |
+| **Self-updating** | Checks Releases daily and offers a one-tap update. Android always shows its own install dialog — nothing changes silently, which for this app is the right answer rather than a limitation. |
 
 ---
 
@@ -104,8 +105,10 @@ the one-tap-to-unblur are the honest response to a weak signal. See the notes in
 
 ## Privacy
 
-- No network calls except the browser fetching pages you asked for, and image bytes for
-  local classification.
+- No network calls except: the browser fetching pages you asked for, image bytes for local
+  classification, and a once-a-day check of this repository's Releases page for a newer
+  build. That last one is the only request you did not ask for; it sends no identifiers and
+  nothing about what you browse, and there is a switch for it in Settings.
 - No account, no server, no analytics, no crash reporting.
 - The transparency log stores hostnames, verdicts and the matched terms — capped at 500
   entries, never uploaded.

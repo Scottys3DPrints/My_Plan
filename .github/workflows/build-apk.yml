@@ -88,19 +88,35 @@ jobs:
       # Both variants are built. The release build is the one to install; the debug build
       # exists so that a problem confined to R8 shrinking still leaves something
       # installable rather than an empty artifact list.
+      # The version code must climb monotonically or Android refuses the update as a
+      # downgrade. The run number does that for free and never repeats.
+      - name: Work out the version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION_NAME="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION_NAME="0.1.0-$(echo "$GITHUB_SHA" | cut -c1-7)"
+          fi
+          echo "name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Building $VERSION_NAME ($GITHUB_RUN_NUMBER)"
+
       - name: Build APKs
         env:
           AEGIS_KEYSTORE_FILE: ${{ steps.signing.outputs.keystore }}
           AEGIS_KEYSTORE_PASSWORD: ${{ secrets.AEGIS_KEYSTORE_PASSWORD }}
           AEGIS_KEY_ALIAS: ${{ secrets.AEGIS_KEY_ALIAS }}
           AEGIS_KEY_PASSWORD: ${{ secrets.AEGIS_KEY_PASSWORD }}
+          AEGIS_VERSION_NAME: ${{ steps.version.outputs.name }}
+          AEGIS_VERSION_CODE: ${{ steps.version.outputs.code }}
         run: ./gradlew :app:assembleDebug :app:assembleRelease
 
       - name: Name the artifacts
         id: naming
         run: |
-          VERSION=$(grep -m1 'versionName' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/')
-          SHORT_SHA=$(echo "$GITHUB_SHA" | cut -c1-7)
+          VERSION="${{ steps.version.outputs.name }}"
+          CODE="${{ steps.version.outputs.code }}"
           mkdir -p dist
 
           RELEASE_APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
@@ -108,15 +124,41 @@ jobs:
             echo "No release APK produced." >&2
             exit 1
           fi
-          cp "$RELEASE_APK" "dist/aegis-${VERSION}-${SHORT_SHA}.apk"
-          echo "release=dist/aegis-${VERSION}-${SHORT_SHA}.apk" >> "$GITHUB_OUTPUT"
+          # The trailing number is the version code. The in-app updater parses it from
+          # this filename, so the format is load-bearing — do not change it casually.
+          cp "$RELEASE_APK" "dist/aegis-${VERSION}-${CODE}.apk"
+          echo "release=dist/aegis-${VERSION}-${CODE}.apk" >> "$GITHUB_OUTPUT"
 
           DEBUG_APK=$(find app/build/outputs/apk/debug -name '*.apk' | head -n 1)
           if [ -n "$DEBUG_APK" ]; then
-            cp "$DEBUG_APK" "dist/aegis-${VERSION}-${SHORT_SHA}-debug.apk"
+            cp "$DEBUG_APK" "dist/aegis-${VERSION}-${CODE}-debug.apk"
           fi
 
           ls -lh dist
+
+      # Prints the certificate the APK was signed with.
+      #
+      # This is not decoration. Android will only install an update over an app signed
+      # with the *same* key, and a build with no signing secrets falls back to the debug
+      # key — which each fresh CI runner generates at random. Two such builds therefore
+      # cannot update each other, and this step is how you can see that for yourself:
+      # compare the fingerprint across two runs. Once the signing secrets are set, it
+      # should be identical every time, and identical to the key on your machine.
+      - name: Report signing identity
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -r | head -n 1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "apksigner not found; skipping." && exit 0
+          fi
+          echo "Signed with (release):"
+          "$APKSIGNER" verify --print-certs "${{ steps.naming.outputs.release }}" \
+            | grep -i "SHA-256 digest" || echo "  could not read certificate"
+          if [ -n "${{ steps.signing.outputs.signed }}" ] && [ "${{ steps.signing.outputs.signed }}" = "false" ]; then
+            echo ""
+            echo "::warning::No signing key configured. This build uses a throwaway debug key that"
+            echo "::warning::differs on every run, so it CANNOT install as an update over any other"
+            echo "::warning::build. Set the AEGIS_KEYSTORE_* secrets to get updatable APKs."
+          fi
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4

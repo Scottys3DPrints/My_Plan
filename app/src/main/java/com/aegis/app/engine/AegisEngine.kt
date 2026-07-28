@@ -4,6 +4,8 @@ import android.content.Context
 import com.aegis.app.data.AegisStore
 import com.aegis.app.notify.PartnerNotifier
 import com.aegis.app.service.CriticalPackages
+import com.aegis.app.update.AvailableUpdate
+import com.aegis.app.update.UpdateChecker
 import com.aegis.core.budget.BudgetKeys
 import com.aegis.core.budget.BudgetTracker
 import com.aegis.core.budget.GraceClaimResult
@@ -39,6 +41,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * The application-scoped wiring of everything in `:core`.
@@ -114,6 +117,8 @@ class AegisEngine private constructor(context: Context) {
         scope.launch { store.pendingChanges.collect { _pending.value = it } }
         scope.launch { store.log.collect { _log.value = it } }
         scope.launch { store.onboardingComplete.collect { _onboardingComplete.value = it } }
+        scope.launch { store.updateChecksEnabled.collect { _updateChecksEnabled.value = it } }
+        scope.launch { store.lastUpdateCheckMillis.collect { lastUpdateCheck = it } }
         scope.launch {
             store.overrides.collect {
                 _overrides.value = it
@@ -329,12 +334,53 @@ class AegisEngine private constructor(context: Context) {
 
     suspend fun completeOnboarding() = store.markOnboardingComplete()
 
+    // ----------------------------------------------------------------------- updates
+
+    private val _updateAvailable = MutableStateFlow<AvailableUpdate?>(null)
+    val updateAvailable: StateFlow<AvailableUpdate?> = _updateAvailable.asStateFlow()
+
+    private val _updateChecksEnabled = MutableStateFlow(true)
+    val updateChecksEnabled: StateFlow<Boolean> = _updateChecksEnabled.asStateFlow()
+
+    suspend fun setUpdateChecksEnabled(enabled: Boolean) {
+        _updateChecksEnabled.value = enabled
+        store.setUpdateChecksEnabled(enabled)
+        if (!enabled) _updateAvailable.value = null
+    }
+
+    /**
+     * Look for a newer build.
+     *
+     * [force] bypasses both the opt-out and the once-a-day throttle, for the "Check now"
+     * button — an explicit tap is a request, not background chatter.
+     */
+    suspend fun checkForUpdate(force: Boolean = false): AvailableUpdate? {
+        if (!force && !_updateChecksEnabled.value) return null
+        if (!force) {
+            val last = lastUpdateCheck
+            if (last > 0 && clock.nowMillis() - last < UPDATE_CHECK_INTERVAL_MILLIS) {
+                return _updateAvailable.value
+            }
+        }
+        val found = withContext(Dispatchers.IO) { UpdateChecker.check(appContext) }
+        lastUpdateCheck = clock.nowMillis()
+        store.setLastUpdateCheck(lastUpdateCheck)
+        _updateAvailable.value = found
+        return found
+    }
+
+    @Volatile
+    private var lastUpdateCheck: Long = 0L
+
     private fun newId(prefix: String): String {
         logSequence += 1
         return "$prefix-${clock.nowMillis()}-$logSequence"
     }
 
     companion object {
+        /** Once a day is plenty for a project that ships when it ships. */
+        private const val UPDATE_CHECK_INTERVAL_MILLIS = 24 * 60 * 60 * 1000L
+
         @Volatile
         private var instance: AegisEngine? = null
 

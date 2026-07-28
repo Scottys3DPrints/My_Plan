@@ -63,6 +63,21 @@ class AegisStore(private val context: Context) {
         preferences[KEY_ONBOARDING] == "done"
     }
 
+    /** Opt-out for the one network request Aegis makes that the user did not ask for. */
+    val updateChecksEnabled: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[KEY_UPDATE_CHECKS] != "off"
+    }
+
+    val lastUpdateCheckMillis: Flow<Long> = context.dataStore.data.map { preferences ->
+        preferences[KEY_LAST_UPDATE_CHECK]?.toLongOrNull() ?: 0L
+    }
+
+    suspend fun setUpdateChecksEnabled(enabled: Boolean) =
+        write(KEY_UPDATE_CHECKS, if (enabled) "on" else "off")
+
+    suspend fun setLastUpdateCheck(millis: Long) =
+        write(KEY_LAST_UPDATE_CHECK, millis.toString())
+
     suspend fun saveRules(value: RuleSet) = write(KEY_RULES, json.encodeToString(RuleSet.serializer(), value))
 
     suspend fun savePending(value: List<PendingChange>) =
@@ -98,5 +113,7 @@ class AegisStore(private val context: Context) {
         val KEY_OVERRIDES = stringPreferencesKey("term_overrides")
         val KEY_LOG = stringPreferencesKey("transparency_log")
         val KEY_ONBOARDING = stringPreferencesKey("onboarding")
+        val KEY_UPDATE_CHECKS = stringPreferencesKey("update_checks")
+        val KEY_LAST_UPDATE_CHECK = stringPreferencesKey("last_update_check")
     }
 }

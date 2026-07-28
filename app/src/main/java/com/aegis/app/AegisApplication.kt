@@ -38,10 +38,21 @@ class AegisApplication : Application() {
                 delay(PENDING_CHECK_INTERVAL_MILLIS)
             }
         }
+
+        // Aegis is sideloaded, so nothing else is going to tell it that a newer build
+        // exists. Throttled to once a day inside the engine, and skipped entirely if the
+        // user turned it off in Settings.
+        scope.launch {
+            delay(UPDATE_CHECK_DELAY_MILLIS)
+            runCatching { engine.checkForUpdate() }
+        }
     }
 
     companion object {
         const val ALERTS_CHANNEL_ID = "aegis-alerts"
         private const val PENDING_CHECK_INTERVAL_MILLIS = 60_000L
+
+        /** Let the app finish starting before making a network request. */
+        private const val UPDATE_CHECK_DELAY_MILLIS = 8_000L
     }
 }
