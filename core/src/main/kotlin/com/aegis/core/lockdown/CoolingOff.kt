@@ -117,6 +117,10 @@ class CoolingOff(private val clock: Clock) {
             deltas += RuleDelta.FeedChange(current.feedRule, proposed.feedRule)
         }
 
+        if (current.shortFormRule != proposed.shortFormRule) {
+            deltas += RuleDelta.ShortFormChange(current.shortFormRule, proposed.shortFormRule)
+        }
+
         if (current.partner != proposed.partner) {
             deltas += RuleDelta.PartnerChange(current.partner, proposed.partner)
         }

@@ -120,10 +120,32 @@ still waiting.
 
 ---
 
-## 4a. Interrupting endless scrolling
+## 4a. Reels, Shorts, and long scrolls
 
-**Rules → Scrolling.** Off by default; the switch turns it on and pre-selects the feed
-apps you actually have installed.
+**Rules → Scrolling.** Two different rules live here, and the difference matters.
+
+### Switching a screen off entirely
+
+Instagram Reels, Facebook Reels and YouTube Shorts each get a switch. On means the screen
+does not open — no timer, no threshold, no warning first. The rest of the app keeps
+working; only that screen is refused.
+
+It acts in two places. A **tap** on the Reels or Shorts tab is caught before anything
+renders, which is as close to "before I enter it" as Android allows — a window has to
+exist before its contents can be read, so recognising the screen can only ever act on the
+first frame. The screen check exists as well, because a tap is not the only way in: a
+deep link, a notification, a share from another app or a swipe within a pager all arrive
+without one.
+
+Recognition is by **layout**, not by words. Aegis looks for the view ids that only exist
+on those screens, so nothing anyone posted is read to do it. That also means an app
+redesign could eventually move them — if Reels starts opening again after an app update,
+say so and the stems get updated.
+
+### Interrupting a long scroll
+
+Off by default; the switch turns it on and pre-selects the feed apps you actually have
+installed.
 
 This is the one rule that isn't about *what* you reach or *how long*. A daily budget
 charges the same minute whether it went on replying to someone or on falling down a feed,

@@ -1,5 +1,6 @@
 package com.aegis.core.rules
 
+import com.aegis.core.feed.ShortFormRule
 import com.aegis.core.model.Category
 import com.aegis.core.model.RouteContext
 import com.aegis.core.util.Days
@@ -250,6 +251,7 @@ data class RuleSet(
     val profiles: List<Profile> = emptyList(),
     val focusSession: FocusSession? = null,
     val feedRule: FeedRule = FeedRule(),
+    val shortFormRule: ShortFormRule = ShortFormRule(),
     val partner: AccountabilityPartner? = null,
     /**
      * Whether the self-binding lock is live.

@@ -20,6 +20,8 @@ import com.aegis.core.rules.Decision
 import com.aegis.core.rules.Outcome
 import com.aegis.core.feed.EndlessFeedWatcher
 import com.aegis.core.feed.FeedVerdict
+import com.aegis.core.feed.ShortFormSignals
+import com.aegis.core.feed.ShortFormSurface
 import com.aegis.core.budget.GraceClaimResult
 import com.aegis.core.budget.GraceRequestResult
 import com.aegis.core.util.Urls
@@ -83,6 +85,7 @@ class AegisAccessibilityService : AccessibilityService() {
     private var lastJudgedAt: Long = 0L
     private var lastWindowTitle: String = ""
     private val feedWatcher = EndlessFeedWatcher()
+    private var lastShortFormScanAt: Long = 0L
     private var lastBlockedTarget: String? = null
     private var lastBlockAt: Long = 0L
 
@@ -127,16 +130,164 @@ class AegisAccessibilityService : AccessibilityService() {
                 // away rather than waiting for the next difference.
                 lastJudgedFingerprint = 0
                 lastUrlScanAt = 0L
+                lastShortFormScanAt = 0L
+                checkShortFormScreen(packageName)
                 scanForBlockedAddress(packageName)
             }
 
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> checkShortFormTap(packageName, event)
+
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
+                checkShortFormScreen(packageName)
                 noteScroll(packageName)
                 maybeScanAddress(packageName)
             }
 
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> maybeScanAddress(packageName)
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                checkShortFormScreen(packageName)
+                maybeScanAddress(packageName)
+            }
         }
+    }
+
+    // ------------------------------------------------------------------- short-form video
+
+    /**
+     * Catch the tap, before anything renders.
+     *
+     * This is the half of the feature that answers "block it before I'm on it". A window
+     * has to exist before its contents can be read, so screen detection can only ever act
+     * on the first frame — fast, but not before. A tap on the Reels tab is available
+     * earlier than that and is a plainer signal besides: it is a statement of intent, not
+     * a description of what happens to be on screen.
+     *
+     * Not sufficient on its own, which is why the screen check exists too — a deep link, a
+     * notification, a share from another app and a swipe within a pager all arrive with no
+     * tap on anything recognisable.
+     */
+    private fun checkShortFormTap(packageName: String, event: AccessibilityEvent) {
+        val rule = engine.rules.value.shortFormRule
+        if (!rule.watches(packageName)) return
+
+        val source = event.source
+        val surface: ShortFormSurface?
+        try {
+            val label = (source?.contentDescription ?: event.contentDescription)?.toString()
+                ?: event.text.orEmpty().filterNotNull().joinToString(" ").ifBlank { null }
+            surface = ShortFormSignals.matchTap(
+                packageName = packageName,
+                viewId = source?.viewIdResourceName,
+                description = label,
+            )
+        } catch (error: Exception) {
+            return
+        } finally {
+            @Suppress("DEPRECATION")
+            source?.recycle()
+        }
+
+        if (surface == null || !rule.blocks(surface)) return
+        blockShortForm(surface, viaTap = true)
+    }
+
+    /**
+     * Catch the screen, on its first frame.
+     *
+     * Two lookups deep at most in the common case: the rule says whether this app is worth
+     * looking at, and only then is anything walked. An app nobody selected costs a set
+     * membership test.
+     */
+    private fun checkShortFormScreen(packageName: String) {
+        val rule = engine.rules.value.shortFormRule
+        if (!rule.watches(packageName)) return
+
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastShortFormScanAt < SHORT_FORM_SCAN_INTERVAL_MILLIS) return
+        lastShortFormScanAt = now
+
+        val root = activeRoot() ?: return
+        val surface: ShortFormSurface?
+        try {
+            if (root.packageName?.toString() != packageName) return
+            surface = ShortFormSignals.matchScreen(packageName, viewIdsOnScreen(root))
+        } catch (error: Exception) {
+            return
+        } finally {
+            @Suppress("DEPRECATION")
+            root.recycle()
+        }
+
+        if (surface == null || !rule.blocks(surface)) return
+        blockShortForm(surface, viaTap = false)
+    }
+
+    /**
+     * Every view id on screen, bounded.
+     *
+     * Ids only, not text: the point is to recognise a layout, and the words on a Reels
+     * screen are somebody's caption. Nothing here reads content.
+     */
+    private fun viewIdsOnScreen(root: AccessibilityNodeInfo): Sequence<String> = sequence {
+        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
+        queue.add(root to 0)
+        var visited = 0
+
+        while (queue.isNotEmpty() && visited < MAX_SURFACE_PROBE_NODES) {
+            val (node, depth) = queue.removeFirst()
+            visited++
+
+            node.viewIdResourceName?.let { yield(it) }
+
+            if (depth < MAX_SURFACE_PROBE_DEPTH) {
+                for (index in 0 until node.childCount) {
+                    val child = try {
+                        node.getChild(index)
+                    } catch (error: Exception) {
+                        null
+                    } ?: continue
+                    queue.add(child to depth + 1)
+                }
+            }
+        }
+    }
+
+    /**
+     * Refuse the surface.
+     *
+     * No countdown, no grace tap, no threshold. Those exist for judgements that could be
+     * wrong; this one is not a judgement at all — the user named this screen, by name, in
+     * advance. Back first so the app is off it, then say what happened.
+     */
+    private fun blockShortForm(surface: ShortFormSurface, viaTap: Boolean) {
+        val now = SystemClock.elapsedRealtime()
+        if (surface.id == lastBlockedTarget && now - lastBlockAt < SHORT_FORM_COOLDOWN_MILLIS) return
+        lastBlockedTarget = surface.id
+        lastBlockAt = now
+
+        val decision = Decision(
+            outcome = Outcome.BLOCK,
+            cause = BlockCause.SHORT_FORM_SURFACE,
+            explanation = "${surface.label} is switched off. You asked for that, in advance, " +
+                "on a calmer day than this one.",
+            evidence = listOf(
+                if (viaTap) "stopped at the tap, before it opened" else "recognised the screen",
+                surface.packageName,
+            ),
+        )
+
+        performGlobalAction(GLOBAL_ACTION_BACK)
+        engine.recordFeedInterruption(surface.label, decision)
+        val shown = overlay?.show(
+            decision = decision,
+            target = surface.label,
+            // Not home. Back has already left the surface, and taking the whole app away
+            // would punish the rest of it — which is not what was asked for.
+            onClose = { },
+            grace = null,
+        ) ?: false
+        engine.diagnostics.recordEnforcement(
+            if (shown) "blocked ${surface.label}" else "could not show the ${surface.label} block",
+        )
     }
 
     /**
@@ -846,6 +997,24 @@ class AegisAccessibilityService : AccessibilityService() {
         private const val HARVEST_INTERVAL_MILLIS = 600L
 
         private const val BLOCK_COOLDOWN_MILLIS = 2_500L
+
+        /**
+         * The short-form checks, rationed separately from everything else.
+         *
+         * Short because the whole promise is "immediately", and cheap enough to afford:
+         * an app with no selected surface never gets past a set membership test, and the
+         * probe below reads ids only, no text.
+         */
+        private const val SHORT_FORM_SCAN_INTERVAL_MILLIS = 250L
+        private const val MAX_SURFACE_PROBE_NODES = 300
+        private const val MAX_SURFACE_PROBE_DEPTH = 16
+
+        /**
+         * Long enough that the block screen is readable, short enough that staying on the
+         * surface means meeting it again. Refusing to re-block would turn one Back press
+         * into free access.
+         */
+        private const val SHORT_FORM_COOLDOWN_MILLIS = 4_000L
 
         /**
          * How far back to walk when the block screen is closed, and how long to leave

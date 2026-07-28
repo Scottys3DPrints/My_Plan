@@ -5,6 +5,8 @@ import com.aegis.core.rules.AccountabilityPartner
 import com.aegis.core.rules.AppRule
 import com.aegis.core.rules.CategoryRule
 import com.aegis.core.rules.RuleMode
+import com.aegis.core.feed.ShortFormRule
+import com.aegis.core.feed.ShortFormSurface
 import com.aegis.core.rules.FeedRule
 import com.aegis.core.rules.RuleSet
 import com.aegis.core.util.FakeClock
@@ -430,5 +432,44 @@ class CoolingOffTest {
 
         assertTrue(outcome.appliedNow.feedRule.enabled, "it should still be on until the wait is over")
         assertNotNull(outcome.queued)
+    }
+
+    @Test
+    fun `letting Reels back in waits, shutting it off does not`() {
+        // The rule someone is most likely to want to undo in the ten seconds after it
+        // stops them — which is exactly the ten seconds it must not be undoable in.
+        val (_, coolingOff, base) = setup()
+        val blocked = base.copy(
+            shortFormRule = ShortFormRule(
+                enabled = true,
+                surfaces = setOf(ShortFormSurface.INSTAGRAM_REELS),
+            ),
+        )
+
+        val allowAgain = coolingOff.submit(
+            current = blocked,
+            proposed = blocked.copy(shortFormRule = ShortFormRule(enabled = false)),
+            idSeed = "allow",
+        )
+        assertTrue(
+            allowAgain.appliedNow.shortFormRule.blocks(ShortFormSurface.INSTAGRAM_REELS),
+            "Reels must stay blocked until the wait is over",
+        )
+        assertNotNull(allowAgain.queued)
+
+        val alsoShorts = coolingOff.submit(
+            current = blocked,
+            proposed = blocked.copy(
+                shortFormRule = blocked.shortFormRule.copy(
+                    surfaces = blocked.shortFormRule.surfaces + ShortFormSurface.YOUTUBE_SHORTS,
+                ),
+            ),
+            idSeed = "more",
+        )
+        assertTrue(
+            alsoShorts.appliedNow.shortFormRule.blocks(ShortFormSurface.YOUTUBE_SHORTS),
+            "adding a surface is a tightening and lands at once",
+        )
+        assertNull(alsoShorts.queued)
     }
 }

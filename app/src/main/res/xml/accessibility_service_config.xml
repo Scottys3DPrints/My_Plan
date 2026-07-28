@@ -16,10 +16,22 @@
 
   typeViewScrolled is here because a page's content arrives as it is scrolled: the first
   tree after navigation is often nearly empty, and without this the only chances to look
-  are the load event and a six-second timer.
+  are the load event and a six-second timer. It is also how an endless-scroll run is
+  counted at all.
+
+  typeViewClicked is the only way to refuse a screen *before* it renders. Window content
+  cannot be read until a window exists, so screen recognition can act on the first frame
+  but never sooner. A tap on the Reels tab arrives earlier than that, and is a clearer
+  signal besides: it is an intention, not a description of what happens to be on screen.
+  Only the tapped node's view id and label are read, and only in the apps whose surfaces
+  the user has selected.
+
+  flagReportViewIds earns its place twice over: it is what makes both the address bar
+  lookup and short-form surface recognition possible. Recognising a screen by its layout
+  ids rather than by its words means nothing anyone posted is ever read to do it.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewScrolled"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewScrolled|typeViewClicked"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
     android:canRetrieveWindowContent="true"

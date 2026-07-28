@@ -37,6 +37,8 @@ import androidx.compose.ui.unit.dp
 import com.aegis.app.engine.AegisEngine
 import com.aegis.app.service.CriticalPackages
 import com.aegis.app.service.SocialPackages
+import com.aegis.core.feed.ShortFormRule
+import com.aegis.core.feed.ShortFormSurface
 import com.aegis.app.ui.components.Eyebrow
 import com.aegis.app.ui.components.Focus
 import com.aegis.app.ui.components.Note
@@ -71,12 +73,12 @@ fun RulesScreen() {
             title = when (tab) {
                 0 -> "What Aegis judges"
                 1 -> "Apps on this phone"
-                else -> "When scrolling stops being a choice"
+                else -> "Reels, Shorts, and everything after them"
             },
             subtitle = when (tab) {
                 0 -> "Categories, not addresses. A site it has never seen is still caught."
                 1 -> "Block an app outright, or give it a daily budget."
-                else -> "Not what you reach or for how long — whether you are still deciding."
+                else -> "Switch a screen off outright, or be told when a scroll has run long."
             },
         )
 
@@ -127,13 +129,88 @@ private fun ScrollRules() {
         )
     }
 
+    val installedPackages = remember(installed) { installed.map { it.packageName }.toSet() }
     val waiting = pending.firstOrNull { "feed" in it.targetKeys }
 
     fun submit(updated: com.aegis.core.rules.FeedRule) {
         scope.launch { engine.submitRuleChange(rules.copy(feedRule = updated)) }
     }
 
+    val shortForm = rules.shortFormRule
+    val shortFormWaiting = pending.firstOrNull { "shortform" in it.targetKeys }
+
+    fun submitShortForm(updated: ShortFormRule) {
+        scope.launch { engine.submitRuleChange(rules.copy(shortFormRule = updated)) }
+    }
+
     LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            SectionHeader(
+                title = "Switch a screen off entirely",
+                subtitle = "No timer, no threshold, no warning first. The screen simply " +
+                    "does not open.",
+            )
+        }
+
+        items(ShortFormSurface.entries.toList(), key = { "surface:${it.id}" }) { surface ->
+            val isInstalled = surface.packageName in installedPackages
+            Panel {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(surface.label, style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = if (isInstalled) "Stopped at the tap, before it opens."
+                            else "Not installed on this phone.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Ash,
+                        )
+                    }
+                    Switch(
+                        checked = surface in shortForm.surfaces && shortForm.enabled,
+                        onCheckedChange = { on ->
+                            val surfaces = if (on) shortForm.surfaces + surface
+                            else shortForm.surfaces - surface
+                            submitShortForm(
+                                shortForm.copy(enabled = surfaces.isNotEmpty(), surfaces = surfaces),
+                            )
+                        },
+                    )
+                }
+            }
+        }
+
+        if (shortFormWaiting != null) {
+            item {
+                Panel {
+                    WaitingNotice(
+                        summary = shortFormWaiting.summary,
+                        minutes = engine.minutesRemaining(shortFormWaiting),
+                        onCancel = { scope.launch { engine.cancelPending(shortFormWaiting.id) } },
+                    )
+                }
+            }
+        }
+
+        item {
+            Note(
+                "The rest of the app keeps working — only that screen is refused. It is " +
+                    "recognised by its layout, never by anything anyone posted, so no " +
+                    "captions or comments are read to do this.",
+            )
+        }
+
+        item {
+            SectionHeader(
+                title = "Interrupt long scrolling",
+                subtitle = "For the feeds you keep. Not a block — a number, and a way out.",
+            )
+        }
+
         item {
             Panel {
                 Row(

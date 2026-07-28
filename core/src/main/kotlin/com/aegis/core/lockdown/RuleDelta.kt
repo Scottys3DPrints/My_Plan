@@ -6,6 +6,7 @@ import com.aegis.core.rules.AppRule
 import com.aegis.core.rules.Budget
 import com.aegis.core.rules.CategoryRule
 import com.aegis.core.rules.DestinationRule
+import com.aegis.core.feed.ShortFormRule
 import com.aegis.core.rules.FeedRule
 import com.aegis.core.rules.FocusSession
 import com.aegis.core.rules.Profile
@@ -277,6 +278,40 @@ sealed interface RuleDelta {
             }
 
         override fun applyTo(rules: RuleSet): RuleSet = rules.copy(feedRule = after)
+    }
+
+    /**
+     * Changing which short-form surfaces are shut off entirely.
+     *
+     * Loosening waits like everything else. This is the rule someone is most likely to
+     * want to undo in the ten seconds after it stops them, which is precisely the ten
+     * seconds it should not be undoable in.
+     */
+    @Serializable
+    data class ShortFormChange(
+        val before: ShortFormRule,
+        val after: ShortFormRule,
+    ) : RuleDelta {
+        override val direction: ChangeDirection
+            get() = compare(before.strictness, after.strictness)
+
+        override val targetKey: String get() = "shortform"
+
+        override val summary: String
+            get() {
+                val added = after.surfaces - before.surfaces
+                val removed = before.surfaces - after.surfaces
+                return when {
+                    !before.enabled && after.enabled && after.surfaces.isNotEmpty() ->
+                        "Block " + after.surfaces.joinToString { it.label }
+                    before.enabled && !after.enabled -> "Stop blocking short-form video"
+                    added.isNotEmpty() -> "Block " + added.joinToString { it.label }
+                    removed.isNotEmpty() -> "Allow " + removed.joinToString { it.label } + " again"
+                    else -> "Short-form video rule adjusted"
+                }
+            }
+
+        override fun applyTo(rules: RuleSet): RuleSet = rules.copy(shortFormRule = after)
     }
 
     @Serializable

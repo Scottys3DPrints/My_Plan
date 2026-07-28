@@ -32,6 +32,7 @@ enum class BlockCause(val id: String, val headline: String) {
     FOCUS_SESSION("focus_session", "Focus session in progress"),
     PROFILE("profile", "A profile is active"),
     ENDLESS_SCROLL("endless_scroll", "You have been scrolling a while"),
+    SHORT_FORM_SURFACE("short_form_surface", "This screen is switched off"),
     ;
 
     companion object {
