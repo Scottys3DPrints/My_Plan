@@ -25,12 +25,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aegis.app.engine.AegisEngine
-import com.aegis.app.ui.components.AegisCard
-import com.aegis.app.ui.components.Explanation
+import com.aegis.app.ui.components.Note
+import com.aegis.app.ui.components.Panel
 import com.aegis.app.ui.components.SectionHeader
+import com.aegis.app.ui.theme.Ash
+import com.aegis.app.ui.theme.Evidence
 import com.aegis.core.rules.DestinationRule
 import com.aegis.core.util.Urls
 import kotlinx.coroutines.launch
@@ -54,13 +55,14 @@ fun DestinationsScreen() {
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         item {
             SectionHeader(
+                eyebrow = "Destinations",
                 title = "Never reach",
-                subtitle = "Set once. Enforced by every route, not only the app you deleted.",
+                subtitle = "Set once. Enforced by every route — not just the app you deleted.",
             )
         }
 
         item {
-            AegisCard {
+            Panel {
                 OutlinedTextField(
                     value = entry,
                     onValueChange = { entry = it },
@@ -99,22 +101,26 @@ fun DestinationsScreen() {
         }
 
         if (rules.destinationRules.isEmpty()) {
-            item { Explanation("Nothing on the list yet.") }
+            item { Note("Nothing on the list yet.") }
         }
 
         items(rules.destinationRules, key = { it.host }) { rule ->
-            AegisCard {
+            Panel {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text(rule.host, fontWeight = FontWeight.Medium)
+                        Text(
+                            text = rule.host,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = Evidence,
+                        )
                         Text(
                             text = rule.routes.joinToString(", ") { it.label },
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = Ash,
                         )
                     }
                     TextButton(onClick = {
@@ -132,7 +138,7 @@ fun DestinationsScreen() {
         }
 
         item {
-            Explanation(
+            Note(
                 "Requests to an address typed directly as an IP, or made by an app using its " +
                     "own encrypted resolver, are not visible to the network filter. The Aegis " +
                     "browser and the app guard still cover those.",

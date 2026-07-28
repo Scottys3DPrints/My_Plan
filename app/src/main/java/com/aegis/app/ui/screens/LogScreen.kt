@@ -20,26 +20,34 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aegis.app.engine.AegisEngine
-import com.aegis.app.ui.components.AegisCard
-import com.aegis.app.ui.components.Explanation
+import com.aegis.app.ui.components.Ledger
+import com.aegis.app.ui.components.Note
+import com.aegis.app.ui.components.Panel
 import com.aegis.app.ui.components.SectionHeader
+import com.aegis.app.ui.theme.Ash
+import com.aegis.app.ui.theme.Brass
+import com.aegis.app.ui.theme.Evidence
+import com.aegis.app.ui.theme.Rust
 import com.aegis.core.log.Correction
 import com.aegis.core.log.LogEntry
+import com.aegis.core.log.TransparencyLog
 import com.aegis.core.rules.Outcome
 import com.aegis.core.util.LocalTime
 import kotlinx.coroutines.launch
 import java.util.TimeZone
 
 /**
- * "Why was this blocked?" — with a one-tap answer to "because it was wrong" (§3.10).
+ * "Why was this blocked?" — with a one-tap answer to "because it was wrong".
+ *
+ * Laid out as a ledger rather than a feed, because that is what it is: a dated list of
+ * judgments with the evidence attached. The outcome is a coloured rule down the left edge,
+ * so blocks, warnings and allowances are separable by eye while scrolling, without a badge
+ * on every row.
  *
  * A correction here is not a complaint box. It changes the weights the on-device
- * classifier uses, immediately and locally, and the change is visible and reversible in
- * Settings. That is the difference between a filter that feels arbitrary and one that
- * feels like it is yours.
+ * classifier uses, immediately and locally, and is visible and reversible in Settings.
  */
 @Composable
 fun LogScreen() {
@@ -51,44 +59,55 @@ fun LogScreen() {
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         item {
             SectionHeader(
+                eyebrow = "Record",
                 title = "What Aegis did",
-                subtitle = "Kept on this device, capped at the most recent ${com.aegis.core.log.TransparencyLog.LIMIT} events, never uploaded.",
+                subtitle = "Kept on this phone, most recent ${TransparencyLog.LIMIT}, never uploaded.",
             )
         }
 
         if (log.entries.isEmpty()) {
-            item { Explanation("Nothing yet.") }
+            item { Note("Nothing yet. Blocks and warnings will appear here as they happen.") }
         }
 
         items(log.entries, key = { it.id }) { entry ->
-            AegisCard {
+            Panel {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.Top,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(entry.host.ifBlank { "(no address)" }, fontWeight = FontWeight.Medium)
-                        Text(
-                            text = "${outcomeLabel(entry)} · ${entry.route.label} · ${timeOf(entry.atMillis)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    Text(
+                        text = entry.host.ifBlank { "(no address)" },
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = Evidence,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = timeOf(entry.atMillis),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Ash,
+                    )
                 }
 
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = outcomeLabel(entry).uppercase(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = when (entry.outcome) {
+                        Outcome.BLOCK -> Rust
+                        Outcome.WARN -> Brass
+                        Outcome.ALLOW -> Ash
+                    },
+                )
+
                 if (entry.explanation.isNotBlank()) {
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(10.dp))
                     Text(entry.explanation, style = MaterialTheme.typography.bodyMedium)
                 }
 
                 if (entry.evidence.isNotEmpty()) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = entry.evidence.joinToString(" · "),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Spacer(Modifier.height(10.dp))
+                    Ledger(entry.evidence)
                 }
 
                 if (entry.category != null) {
@@ -97,30 +116,35 @@ fun LogScreen() {
                         Text(
                             text = "You marked this: ${entry.correction!!.label}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = Brass,
                         )
                     } else {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            if (entry.wasBlocked) {
-                                TextButton(onClick = {
-                                    scope.launch { engine.correct(entry, Correction.FALSE_POSITIVE) }
-                                }) {
-                                    Text("This was wrong")
+                        TextButton(
+                            onClick = {
+                                scope.launch {
+                                    engine.correct(
+                                        entry,
+                                        if (entry.wasBlocked) Correction.FALSE_POSITIVE else Correction.MISSED,
+                                    )
                                 }
-                            } else {
-                                TextButton(onClick = {
-                                    scope.launch { engine.correct(entry, Correction.MISSED) }
-                                }) {
-                                    Text("Should have been blocked")
-                                }
-                            }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                text = if (entry.wasBlocked) {
+                                    "This was wrong"
+                                } else {
+                                    "This should have been blocked"
+                                },
+                                color = Ash,
+                            )
                         }
                     }
                 }
             }
         }
 
-        item { Spacer(Modifier.height(24.dp)) }
+        item { Spacer(Modifier.height(32.dp)) }
     }
 }
 

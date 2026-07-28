@@ -13,12 +13,19 @@ import kotlinx.serialization.Serializable
  * [com.aegis.core.lockdown.CoolingOff] uses to decide whether an edit tightens the
  * user's own rules or loosens them.
  */
+/**
+ * Named for what happens to the person, not for how the engine works.
+ *
+ * The first version used Off / Warn / Timed / Wall, which are the engine's words. Nobody
+ * arriving at a settings screen knows what "Wall" does to them without tapping it and
+ * finding out, and finding out is expensive once the rules are locked.
+ */
 @Serializable
 enum class RuleMode(val id: String, val label: String, val description: String) {
-    OFF("off", "Off", "Not filtered."),
-    WARN("warn", "Warn", "Shows an interstitial before the content loads."),
-    TIMED("timed", "Timed", "Allowed within a daily budget, then locked."),
-    WALL("wall", "Wall", "Never allowed."),
+    OFF("off", "Allowed", "Not filtered at all."),
+    WARN("warn", "Ask first", "Shows what it found and lets you decide."),
+    TIMED("timed", "Budgeted", "Allowed for a set time each day, then closed."),
+    WALL("wall", "Never", "Blocked outright, every time."),
     ;
 
     val strictness: Int get() = ordinal

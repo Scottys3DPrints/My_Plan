@@ -1,13 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="aegis_background">#FFF8F6F3</color>
-    <color name="aegis_ink">#FF1C1A17</color>
-    <color name="ic_launcher_background">#FF1F3A5F</color>
+    <!--
+      Deliberately identical in light and dark. Aegis commits to one look, so the launch
+      window must match it — otherwise the app opens on a white flash before Compose draws,
+      which on a screen someone reaches for at 1am is the worst possible first frame.
+    -->
+    <color name="aegis_background">#FF0E0E12</color>
+    <color name="aegis_ink">#FFEFEBE3</color>
+    <color name="ic_launcher_background">#FF0E0E12</color>
 
-    <style name="Theme.Aegis" parent="@android:style/Theme.Material.Light.NoActionBar">
+    <style name="Theme.Aegis" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/aegis_background</item>
         <item name="android:statusBarColor">@color/aegis_background</item>
         <item name="android:navigationBarColor">@color/aegis_background</item>
-        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorBackground">@color/aegis_background</item>
     </style>
 </resources>

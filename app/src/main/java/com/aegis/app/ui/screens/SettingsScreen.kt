@@ -31,10 +31,13 @@ import androidx.compose.ui.unit.dp
 import com.aegis.app.BuildConfig
 import com.aegis.app.engine.AegisEngine
 import com.aegis.app.update.Updater
-import com.aegis.app.ui.components.AegisCard
-import com.aegis.app.ui.components.Explanation
-import com.aegis.app.ui.components.LabelledRow
+import com.aegis.app.ui.components.Eyebrow
+import com.aegis.app.ui.components.Focus
+import com.aegis.app.ui.components.Note
+import com.aegis.app.ui.components.Panel
 import com.aegis.app.ui.components.SectionHeader
+import com.aegis.app.ui.components.StatRow
+import com.aegis.app.ui.theme.Ash
 import com.aegis.core.rules.AccountabilityPartner
 import com.aegis.core.util.LocalTime
 import kotlinx.coroutines.Dispatchers
@@ -62,13 +65,14 @@ fun SettingsScreen() {
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         item {
             SectionHeader(
+                eyebrow = "Settings",
                 title = "Cooling-off",
                 subtitle = "How long a change that weakens your rules has to wait.",
             )
         }
 
         item {
-            AegisCard {
+            Panel {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (hours in listOf(1, 12, 24, 72)) {
                         FilterChip(
@@ -96,15 +100,15 @@ fun SettingsScreen() {
                             "making it shorter has to sit through the current ${rules.coolingOffHours}h first."
                     },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = Ash,
                 )
             }
         }
 
         if (pending.isNotEmpty()) {
-            item { SectionHeader(title = "Queued changes") }
+            item { Eyebrow("Queued changes") }
             items(pending, key = { it.id }) { change ->
-                AegisCard(highlighted = true) {
+                Focus {
                     Text(change.summary, fontWeight = FontWeight.Medium)
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -127,12 +131,12 @@ fun SettingsScreen() {
         }
 
         item {
-            AegisCard {
-                LabelledRow("Pause before it is granted", "${rules.graceTapPauseSeconds}s")
+            Panel {
+                StatRow("Pause before it is granted", "${rules.graceTapPauseSeconds}s")
                 Spacer(Modifier.height(6.dp))
-                LabelledRow("Time granted", LocalTime.formatDuration(rules.graceTapMinutes))
+                StatRow("Time granted", LocalTime.formatDuration(rules.graceTapMinutes))
                 Spacer(Modifier.height(6.dp))
-                LabelledRow("Taps per day", rules.maxGraceTapsPerDay.toString())
+                StatRow("Taps per day", rules.maxGraceTapsPerDay.toString())
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (taps in listOf(0, 1, 3, 5)) {
@@ -158,7 +162,7 @@ fun SettingsScreen() {
         }
 
         item {
-            AegisCard {
+            Panel {
                 OutlinedTextField(
                     value = partnerName,
                     onValueChange = { partnerName = it },
@@ -208,7 +212,7 @@ fun SettingsScreen() {
                         "app to send. It has no server of its own, and nothing about what you " +
                         "browse is ever included — only the fact that a rule was weakened.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = Ash,
                 )
             }
         }
@@ -226,7 +230,7 @@ fun SettingsScreen() {
             var status by remember { mutableStateOf("") }
             var busy by remember { mutableStateOf(false) }
 
-            AegisCard(highlighted = update != null) {
+            Panel {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -238,7 +242,7 @@ fun SettingsScreen() {
                             text = "One request to github.com for the latest release. Nothing " +
                                 "about you or what you browse is sent.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = Ash,
                         )
                     }
                     Switch(
@@ -248,7 +252,7 @@ fun SettingsScreen() {
                 }
 
                 Spacer(Modifier.height(12.dp))
-                LabelledRow("Installed", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                StatRow("Installed", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
 
                 val available = update
                 if (available != null) {
@@ -289,7 +293,7 @@ fun SettingsScreen() {
                             text = "Android will ask you to allow Aegis to install apps first. " +
                                 "It always shows its own confirmation — nothing installs silently.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = Ash,
                         )
                     }
                 } else {
@@ -317,7 +321,7 @@ fun SettingsScreen() {
                     Text(
                         text = status,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = Ash,
                     )
                 }
 
@@ -328,7 +332,7 @@ fun SettingsScreen() {
                         "signed with a throwaway one and updates will be refused — see " +
                         "docs/INSTALL.md.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = Ash,
                 )
             }
         }
@@ -341,7 +345,7 @@ fun SettingsScreen() {
         }
 
         item {
-            AegisCard {
+            Panel {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -353,7 +357,7 @@ fun SettingsScreen() {
                             text = "On an allowed page, blur individual images that look explicit. " +
                                 "Tap one to reveal it.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = Ash,
                         )
                     }
                     Switch(
@@ -375,7 +379,7 @@ fun SettingsScreen() {
 
         item {
             val learned = engine.learnedAdjustments()
-            AegisCard {
+            Panel {
                 if (learned.isEmpty()) {
                     Text("Nothing yet.", style = MaterialTheme.typography.bodyMedium)
                 } else {
@@ -397,7 +401,7 @@ fun SettingsScreen() {
         }
 
         item {
-            Explanation(
+            Note(
                 "Aegis has no account and no server. Rules, usage, corrections and the log " +
                     "live in this app's private storage and are excluded from cloud backup — " +
                     "restoring an old backup must not be a way around a cooling-off period.",

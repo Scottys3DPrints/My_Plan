@@ -307,7 +307,11 @@ class CoolingOffTest {
         }
 
         assertEquals(1, pending.size, "one target should have one queued change")
-        assertEquals("Adult / sexual content: Wall → Off", pending.single().summary, "the last tap wins")
+        assertEquals(
+            "Adult / sexual content: Never → Allowed",
+            pending.single().summary,
+            "the last tap wins",
+        )
     }
 
     @Test
@@ -381,6 +385,6 @@ class CoolingOffTest {
             idSeed = "t17",
         ).queued!!
 
-        assertEquals("Adult / sexual content: Wall → Off", pending.summary)
+        assertEquals("Adult / sexual content: Never → Allowed", pending.summary)
     }
 }
