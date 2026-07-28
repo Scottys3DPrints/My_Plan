@@ -26,8 +26,12 @@ val keystoreProperties = Properties().apply {
     }
 }
 
+// Blank counts as absent. CI always defines these variables and leaves them empty when no
+// signing key is configured, so a plain null check would hand `file("")` an empty path and
+// fail the build at configuration time — before a line of the app is even compiled.
 fun signingValue(propertyKey: String, environmentKey: String): String? =
-    keystoreProperties.getProperty(propertyKey) ?: System.getenv(environmentKey)
+    (keystoreProperties.getProperty(propertyKey) ?: System.getenv(environmentKey))
+        ?.takeIf { it.isNotBlank() }
 
 val releaseStoreFile = signingValue("storeFile", "AEGIS_KEYSTORE_FILE")
 val hasReleaseSigning = releaseStoreFile != null && file(releaseStoreFile).exists()
