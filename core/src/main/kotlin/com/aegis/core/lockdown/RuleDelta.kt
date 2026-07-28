@@ -6,6 +6,7 @@ import com.aegis.core.rules.AppRule
 import com.aegis.core.rules.Budget
 import com.aegis.core.rules.CategoryRule
 import com.aegis.core.rules.DestinationRule
+import com.aegis.core.rules.FeedRule
 import com.aegis.core.rules.FocusSession
 import com.aegis.core.rules.Profile
 import com.aegis.core.rules.RuleSet
@@ -239,6 +240,43 @@ sealed interface RuleDelta {
             }
 
         override fun applyTo(rules: RuleSet): RuleSet = rules.copy(focusSession = after)
+    }
+
+    /**
+     * Changing the endless-scroll rule.
+     *
+     * Classified like everything else, and for the same reason: "just let me have another
+     * twenty minutes" is the exact sentence this feature exists to sit in front of, and a
+     * setting you can widen mid-scroll is not a setting, it is a snooze button.
+     */
+    @Serializable
+    data class FeedChange(
+        val before: FeedRule,
+        val after: FeedRule,
+    ) : RuleDelta {
+        override val direction: ChangeDirection
+            get() = compare(before.strictness, after.strictness)
+
+        override val targetKey: String get() = "feed"
+
+        override val summary: String
+            get() = when {
+                !before.enabled && after.enabled ->
+                    "Interrupt endless scrolling after ${after.afterMinutes} min"
+                before.enabled && !after.enabled -> "Stop interrupting endless scrolling"
+                before.afterMinutes != after.afterMinutes ->
+                    "Scroll interruption: ${before.afterMinutes} min → ${after.afterMinutes} min"
+                before.remindEveryMinutes != after.remindEveryMinutes ->
+                    "Scroll reminder: every ${before.remindEveryMinutes} min → " +
+                        "every ${after.remindEveryMinutes} min"
+                before.packageNames.size < after.packageNames.size ->
+                    "Watch ${after.packageNames.size - before.packageNames.size} more app(s) for scrolling"
+                before.packageNames.size > after.packageNames.size ->
+                    "Stop watching ${before.packageNames.size - after.packageNames.size} app(s) for scrolling"
+                else -> "Endless-scroll rule adjusted"
+            }
+
+        override fun applyTo(rules: RuleSet): RuleSet = rules.copy(feedRule = after)
     }
 
     @Serializable

@@ -5,6 +5,7 @@ import com.aegis.core.rules.AccountabilityPartner
 import com.aegis.core.rules.AppRule
 import com.aegis.core.rules.CategoryRule
 import com.aegis.core.rules.RuleMode
+import com.aegis.core.rules.FeedRule
 import com.aegis.core.rules.RuleSet
 import com.aegis.core.util.FakeClock
 import kotlin.test.Test
@@ -386,5 +387,48 @@ class CoolingOffTest {
         ).queued!!
 
         assertEquals("Adult / sexual content: Never → Allowed", pending.summary)
+    }
+
+    @Test
+    fun `giving yourself more scrolling waits, taking it away does not`() {
+        // The sentence this feature exists to sit in front of is "just twenty more
+        // minutes", said while scrolling. If that edit landed instantly the rule would be
+        // a snooze button with extra steps.
+        val (_, coolingOff, base) = setup()
+        val armed = base.copy(
+            feedRule = FeedRule(enabled = true, afterMinutes = 10, packageNames = setOf("com.example.feed")),
+        )
+
+        val looser = coolingOff.submit(
+            current = armed,
+            proposed = armed.copy(feedRule = armed.feedRule.copy(afterMinutes = 30)),
+            idSeed = "looser",
+        )
+        assertEquals(10, looser.appliedNow.feedRule.afterMinutes, "loosening must not land now")
+        assertNotNull(looser.queued)
+
+        val tighter = coolingOff.submit(
+            current = armed,
+            proposed = armed.copy(feedRule = armed.feedRule.copy(afterMinutes = 5)),
+            idSeed = "tighter",
+        )
+        assertEquals(5, tighter.appliedNow.feedRule.afterMinutes, "tightening lands immediately")
+        assertNull(tighter.queued)
+    }
+
+    @Test
+    fun `switching the scroll rule off is a loosening`() {
+        val (_, coolingOff, base) = setup()
+        val armed = base.copy(
+            feedRule = FeedRule(enabled = true, packageNames = setOf("com.example.feed")),
+        )
+        val outcome = coolingOff.submit(
+            current = armed,
+            proposed = armed.copy(feedRule = armed.feedRule.copy(enabled = false)),
+            idSeed = "off",
+        )
+
+        assertTrue(outcome.appliedNow.feedRule.enabled, "it should still be on until the wait is over")
+        assertNotNull(outcome.queued)
     }
 }

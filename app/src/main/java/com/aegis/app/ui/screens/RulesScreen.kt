@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.aegis.app.engine.AegisEngine
 import com.aegis.app.service.CriticalPackages
+import com.aegis.app.service.SocialPackages
 import com.aegis.app.ui.components.Eyebrow
 import com.aegis.app.ui.components.Focus
 import com.aegis.app.ui.components.Note
@@ -67,16 +68,20 @@ fun RulesScreen() {
     Column(Modifier.fillMaxSize()) {
         SectionHeader(
             eyebrow = "Rules",
-            title = if (tab == 0) "What Aegis judges" else "Apps on this phone",
-            subtitle = if (tab == 0) {
-                "Categories, not addresses. A site it has never seen is still caught."
-            } else {
-                "Block an app outright, or give it a daily budget."
+            title = when (tab) {
+                0 -> "What Aegis judges"
+                1 -> "Apps on this phone"
+                else -> "When scrolling stops being a choice"
+            },
+            subtitle = when (tab) {
+                0 -> "Categories, not addresses. A site it has never seen is still caught."
+                1 -> "Block an app outright, or give it a daily budget."
+                else -> "Not what you reach or for how long — whether you are still deciding."
             },
         )
 
         Switcher(
-            options = listOf("Content", "Apps"),
+            options = listOf("Content", "Apps", "Scrolling"),
             selected = tab,
             onSelect = { tab = it },
             modifier = Modifier.padding(horizontal = 16.dp),
@@ -84,7 +89,191 @@ fun RulesScreen() {
 
         Spacer(Modifier.height(8.dp))
 
-        if (tab == 0) ContentRules() else AppRules()
+        when (tab) {
+            0 -> ContentRules()
+            1 -> AppRules()
+            else -> ScrollRules()
+        }
+    }
+}
+
+/**
+ * The endless-feed rule.
+ *
+ * Separate from the Apps tab on purpose, even though it is also per-app. A daily budget
+ * answers "how much of this do I get?"; this answers "am I still choosing?" — and putting
+ * them in one list would have made this look like another way of spelling a time limit,
+ * which is the one thing it is not.
+ */
+@Composable
+private fun ScrollRules() {
+    val context = LocalContext.current
+    val engine = remember { AegisEngine.get(context) }
+    val scope = rememberCoroutineScope()
+    val rules by engine.rules.collectAsState()
+    val pending by engine.pending.collectAsState()
+    val rule = rules.feedRule
+
+    val installed by produceState(initialValue = emptyList<InstalledApp>()) {
+        value = withContext(Dispatchers.IO) { loadLaunchableApps(context) }
+    }
+
+    // Known feeds first, then everything else. The list is long and the four apps anyone
+    // actually means should not need scrolling to reach — which would be its own joke.
+    val ordered = remember(installed) {
+        installed.sortedWith(
+            compareByDescending<InstalledApp> { it.packageName in SocialPackages.KNOWN }
+                .thenBy { it.label.lowercase() },
+        )
+    }
+
+    val waiting = pending.firstOrNull { "feed" in it.targetKeys }
+
+    fun submit(updated: com.aegis.core.rules.FeedRule) {
+        scope.launch { engine.submitRuleChange(rules.copy(feedRule = updated)) }
+    }
+
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            Panel {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Interrupt endless scrolling", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = "Says how long you have been at it, then puts the phone down.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Ash,
+                        )
+                    }
+                    Switch(
+                        checked = rule.enabled,
+                        onCheckedChange = { on ->
+                            submit(
+                                if (on && rule.packageNames.isEmpty()) {
+                                    // Turning it on with nothing selected would be a switch
+                                    // that does nothing, so it starts with the feeds that
+                                    // are actually installed. Every one is removable below.
+                                    rule.copy(
+                                        enabled = true,
+                                        packageNames = installed
+                                            .map { it.packageName }
+                                            .filter { it in SocialPackages.KNOWN }
+                                            .toSet(),
+                                    )
+                                } else {
+                                    rule.copy(enabled = on)
+                                },
+                            )
+                        },
+                    )
+                }
+
+                if (waiting != null) {
+                    Spacer(Modifier.height(16.dp))
+                    WaitingNotice(
+                        summary = waiting.summary,
+                        minutes = engine.minutesRemaining(waiting),
+                        onCancel = { scope.launch { engine.cancelPending(waiting.id) } },
+                    )
+                }
+            }
+        }
+
+        if (rule.enabled) {
+            item {
+                Panel {
+                    Eyebrow("After")
+                    Spacer(Modifier.height(8.dp))
+                    Text("Say something after", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(8.dp))
+                    MinutePicker(
+                        options = listOf(5, 10, 20, 30),
+                        selected = rule.afterMinutes,
+                        onSelect = { submit(rule.copy(afterMinutes = it)) },
+                    )
+                    Spacer(Modifier.height(18.dp))
+                    Text("Then again every", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(8.dp))
+                    MinutePicker(
+                        options = listOf(2, 5, 10, 15),
+                        selected = rule.remindEveryMinutes,
+                        onSelect = { submit(rule.copy(remindEveryMinutes = it)) },
+                    )
+                }
+            }
+
+            item {
+                Note(
+                    "A pause of more than a minute and a half ends the run and the count " +
+                        "starts again — so glancing at a message does not cost you, and " +
+                        "putting the phone down genuinely resets it.",
+                )
+            }
+
+            item {
+                SectionHeader(
+                    title = "Which apps",
+                    subtitle = "Scrolling is also how you read an article or go back " +
+                        "through a chat, so this only watches what you name.",
+                )
+            }
+
+            items(ordered, key = { it.packageName }) { app ->
+                val watched = app.packageName in rule.packageNames
+                Panel {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(app.label, style = MaterialTheme.typography.titleMedium)
+                            if (app.packageName in SocialPackages.KNOWN) {
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = "Known feed",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Brass,
+                                )
+                            }
+                        }
+                        Switch(
+                            checked = watched,
+                            onCheckedChange = { on ->
+                                submit(
+                                    rule.copy(
+                                        packageNames = if (on) rule.packageNames + app.packageName
+                                        else rule.packageNames - app.packageName,
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+        } else {
+            item {
+                Note(
+                    "Off. Nothing counts your scrolling, and no scroll events are looked " +
+                        "at — the rule names the apps it watches, and right now it names none.",
+                )
+            }
+        }
+
+        item {
+            Note(
+                "This needs the app & route guard switched on, the same as app limits. " +
+                    "Nothing about what you scrolled past is recorded — only how long, " +
+                    "in which app, and that is what appears in the Record.",
+            )
+        }
+
+        item { Spacer(Modifier.height(32.dp)) }
     }
 }
 

@@ -120,6 +120,39 @@ still waiting.
 
 ---
 
+## 4a. Interrupting endless scrolling
+
+**Rules → Scrolling.** Off by default; the switch turns it on and pre-selects the feed
+apps you actually have installed.
+
+This is the one rule that isn't about *what* you reach or *how long*. A daily budget
+charges the same minute whether it went on replying to someone or on falling down a feed,
+and the classifier has nothing to say because no individual post is the problem. This
+watches the shape of the use instead: an unbroken run of scrolling in an app you already
+decided was fine.
+
+- **Say something after** — how long one unbroken run may go. Default 10 minutes.
+- **Then again every** — how long before it says so again. Default 5 minutes.
+- **Which apps** — it only watches what you name. Scrolling is also how you read a long
+  article or go back through a chat, and a version of this that interrupted those would
+  be off within a day.
+
+A pause longer than 90 seconds ends the run and the count restarts, so glancing at a
+message doesn't cost you and putting the phone down genuinely resets it. It also needs
+more than 25 swipes before duration counts for anything — otherwise an app left open on a
+table would trip it having done nothing.
+
+The screen it shows is not a block. Nothing is against the rules, so there is no bargain
+to negotiate: it names the number and the only button puts the phone down. Interruptions
+appear in the Record, which is where the feature earns its keep — seeing *23 minutes, 40
+minutes, 31 minutes* three evenings running is worth more than any single interruption.
+
+Loosening it — longer runs, fewer reminders, unwatching an app, switching it off —
+waits out the cooling-off period like every other loosening. "Just twenty more minutes",
+said mid-scroll, is the exact sentence this exists to sit in front of.
+
+---
+
 ## 5. Updating without redownloading every time
 
 Once signing is set up **and you have published a release**, Aegis updates itself: it

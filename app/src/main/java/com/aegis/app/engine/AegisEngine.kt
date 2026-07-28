@@ -327,6 +327,17 @@ class AegisEngine private constructor(context: Context) {
         return id
     }
 
+    /**
+     * Put a scroll interruption in the Record alongside everything else.
+     *
+     * It belongs there for the same reason blocks do: the Record is the honest account of
+     * what Aegis did to you, and an interruption you cannot look back at afterwards is
+     * just an app that shouted at you once. Seeing "23 minutes, 40 minutes, 31 minutes"
+     * three evenings running is the whole value of the feature.
+     */
+    fun recordFeedInterruption(appLabel: String, decision: Decision): String =
+        record(appLabel, decision)
+
     fun noteProceededPastWarning(entryId: String) {
         scope.launch {
             writeLock.withLock {

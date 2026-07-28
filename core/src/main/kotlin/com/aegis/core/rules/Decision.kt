@@ -31,6 +31,7 @@ enum class BlockCause(val id: String, val headline: String) {
     APP_BUDGET_SPENT("app_budget_spent", "Today's time is spent"),
     FOCUS_SESSION("focus_session", "Focus session in progress"),
     PROFILE("profile", "A profile is active"),
+    ENDLESS_SCROLL("endless_scroll", "You have been scrolling a while"),
     ;
 
     companion object {

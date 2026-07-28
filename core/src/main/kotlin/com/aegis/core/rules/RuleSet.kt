@@ -179,6 +179,50 @@ data class FocusSession(
 }
 
 /**
+ * "Tell me when I have stopped choosing."
+ *
+ * Categories judge *what* you reach and budgets judge *how long*. Neither can see the
+ * thing most people actually lose an evening to: an app they deliberately allowed,
+ * scrolled past the point of deciding anything. Every individual post is fine. The
+ * minutes look identical to a budget whether they went on replying to someone or on a
+ * feed. This rule is the only one that looks at the shape of the use rather than its
+ * content or its length.
+ *
+ * [packageNames] is explicit rather than "everything": scrolling is also how you read a
+ * long article, work through a settings screen or go back through a chat, and a version
+ * of this that interrupted all of those would be off within a day.
+ */
+@Serializable
+data class FeedRule(
+    val enabled: Boolean = false,
+    /** How long a single unbroken scroll may run before it gets interrupted. */
+    val afterMinutes: Int = 10,
+    /** How long before it says so again, if the scrolling simply continues. */
+    val remindEveryMinutes: Int = 5,
+    /**
+     * Scroll events needed before duration counts for anything. Without this, an app
+     * left open on a table would trip the rule having done nothing at all.
+     */
+    val minScrolls: Int = 25,
+    /**
+     * How long a pause may be before the run is considered over. Generous on purpose —
+     * people glance at a message and come back, and treating that as a fresh start would
+     * mean the counter never reached anything.
+     */
+    val idleGapSeconds: Int = 90,
+    val packageNames: Set<String> = emptySet(),
+) {
+    fun appliesTo(packageName: String): Boolean = enabled && packageName in packageNames
+
+    val strictness: Int
+        get() = if (!enabled) 0 else 100_000 -
+            afterMinutes * 100 -
+            remindEveryMinutes * 10 -
+            minScrolls +
+            packageNames.size
+}
+
+/**
  * The accountability relationship (§3.7). A contact address and nothing more —
  * Aegis never sends browsing history anywhere, only the fact that a rule was weakened.
  */
@@ -205,6 +249,7 @@ data class RuleSet(
     val budgets: List<Budget> = emptyList(),
     val profiles: List<Profile> = emptyList(),
     val focusSession: FocusSession? = null,
+    val feedRule: FeedRule = FeedRule(),
     val partner: AccountabilityPartner? = null,
     /**
      * Whether the self-binding lock is live.

@@ -113,6 +113,10 @@ class CoolingOff(private val clock: Clock) {
             deltas += RuleDelta.FocusSessionChange(current.focusSession, proposed.focusSession)
         }
 
+        if (current.feedRule != proposed.feedRule) {
+            deltas += RuleDelta.FeedChange(current.feedRule, proposed.feedRule)
+        }
+
         if (current.partner != proposed.partner) {
             deltas += RuleDelta.PartnerChange(current.partner, proposed.partner)
         }

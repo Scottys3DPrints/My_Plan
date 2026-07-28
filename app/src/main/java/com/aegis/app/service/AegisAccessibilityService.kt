@@ -18,6 +18,8 @@ import com.aegis.core.model.RouteContext
 import com.aegis.core.rules.BlockCause
 import com.aegis.core.rules.Decision
 import com.aegis.core.rules.Outcome
+import com.aegis.core.feed.EndlessFeedWatcher
+import com.aegis.core.feed.FeedVerdict
 import com.aegis.core.budget.GraceClaimResult
 import com.aegis.core.budget.GraceRequestResult
 import com.aegis.core.util.Urls
@@ -80,6 +82,7 @@ class AegisAccessibilityService : AccessibilityService() {
     private var lastJudgedFingerprint: Int = 0
     private var lastJudgedAt: Long = 0L
     private var lastWindowTitle: String = ""
+    private val feedWatcher = EndlessFeedWatcher()
     private var lastBlockedTarget: String? = null
     private var lastBlockAt: Long = 0L
 
@@ -127,18 +130,87 @@ class AegisAccessibilityService : AccessibilityService() {
                 scanForBlockedAddress(packageName)
             }
 
-            AccessibilityEvent.TYPE_VIEW_SCROLLED,
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                // Content changes fire constantly; a check on every one would be a battery
-                // bug. The interval is short because this step is only an indexed view-id
-                // lookup — the expensive page walk downstream is rationed separately.
-                val now = SystemClock.elapsedRealtime()
-                if (now - lastUrlScanAt >= URL_SCAN_INTERVAL_MILLIS) {
-                    lastUrlScanAt = now
-                    scanForBlockedAddress(packageName)
-                }
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
+                noteScroll(packageName)
+                maybeScanAddress(packageName)
             }
+
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> maybeScanAddress(packageName)
         }
+    }
+
+    /**
+     * Content changes fire constantly; a check on every one would be a battery bug. The
+     * interval is short because this step is only an indexed view-id lookup — the
+     * expensive page walk downstream is rationed separately.
+     */
+    private fun maybeScanAddress(packageName: String) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastUrlScanAt < URL_SCAN_INTERVAL_MILLIS) return
+        lastUrlScanAt = now
+        scanForBlockedAddress(packageName)
+    }
+
+    /**
+     * Every flick, handed to the thing that counts them.
+     *
+     * The event fires for any scrollable view, which is why the rule names the apps it
+     * applies to rather than watching everything — scrolling is also how you read a long
+     * article, work through a settings screen, or go back through a chat, and a version
+     * of this that interrupted all of those would be switched off within a day.
+     */
+    private fun noteScroll(packageName: String) {
+        val rule = engine.rules.value.feedRule
+        if (!rule.appliesTo(packageName)) return
+
+        val verdict = feedWatcher.onScroll(SystemClock.elapsedRealtime(), packageName, rule)
+        val interrupt = verdict as? FeedVerdict.Interrupt ?: return
+        interruptFeed(interrupt)
+    }
+
+    /**
+     * Say something about the scrolling, and get out of the way.
+     *
+     * Deliberately not a block. Nothing here is against the rules — the app is allowed,
+     * the content is fine, and the only thing wrong is that a decision stopped being made
+     * some time ago. So it names the number, offers no bargain to be negotiated, and the
+     * only button puts the phone down. Turning this into a wall would make it a thing to
+     * get around; keeping it a sentence makes it a thing to notice.
+     */
+    private fun interruptFeed(interrupt: FeedVerdict.Interrupt) {
+        val label = appLabel(interrupt.packageName)
+        val decision = Decision(
+            outcome = Outcome.BLOCK,
+            cause = BlockCause.ENDLESS_SCROLL,
+            explanation = if (interrupt.repeat) {
+                "Still going. That is ${interrupt.minutes} minutes in $label without stopping."
+            } else {
+                "You have been scrolling $label for ${interrupt.minutes} minutes."
+            },
+            evidence = listOf(
+                "${interrupt.minutes} minutes of unbroken scrolling",
+                "${interrupt.scrolls} swipes",
+            ),
+        )
+
+        engine.recordFeedInterruption(label, decision)
+        val shown = overlay?.show(
+            decision = decision,
+            target = label,
+            onClose = { performGlobalAction(GLOBAL_ACTION_HOME) },
+            grace = null,
+        ) ?: false
+        engine.diagnostics.recordEnforcement(
+            if (shown) "interrupted $label after ${interrupt.minutes} min"
+            else "could not show the scroll interruption",
+        )
+    }
+
+    private fun appLabel(packageName: String): String = try {
+        val info = packageManager.getApplicationInfo(packageName, 0)
+        packageManager.getApplicationLabel(info).toString()
+    } catch (error: Exception) {
+        packageName
     }
 
     /**
@@ -179,7 +251,7 @@ class AegisAccessibilityService : AccessibilityService() {
         val seconds = ((now - foregroundSince) / 1000L).toInt()
         if (seconds <= 0) return
 
-        val categories = if (previous in SOCIAL_PACKAGES) setOf(Category.SOCIAL) else emptySet()
+        val categories = if (previous in SocialPackages.KNOWN) setOf(Category.SOCIAL) else emptySet()
         engine.recordUsage(seconds, previous, categories)
         foregroundSince = now
     }
@@ -844,23 +916,6 @@ class AegisAccessibilityService : AccessibilityService() {
             "android",
         )
 
-        /** Used to attribute foreground time to the shared "Social" bucket. */
-        private val SOCIAL_PACKAGES = setOf(
-            "com.facebook.katana",
-            "com.facebook.lite",
-            "com.instagram.android",
-            "com.instagram.lite",
-            "com.zhiliaoapp.musically", // TikTok
-            "com.ss.android.ugc.trill", // TikTok, some regions
-            "com.twitter.android",
-            "com.x.android",
-            "com.reddit.frontpage",
-            "com.snapchat.android",
-            "com.pinterest",
-            "com.linkedin.android",
-            "com.tumblr",
-            "com.google.android.youtube",
-        )
 
         /** Whether the user has switched the service on in Android's own settings. */
         fun isEnabled(context: Context): Boolean {
