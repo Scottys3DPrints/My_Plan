@@ -40,6 +40,17 @@ class GuardDiagnostics {
         )
     }
 
+    /**
+     * What happened when a block was actually attempted.
+     *
+     * Separate from the classification result because they fail independently: the page
+     * can be judged correctly and the block screen still never appear, which is exactly
+     * the bug this field was added to expose.
+     */
+    fun recordEnforcement(outcome: String) {
+        _state.value = _state.value.copy(lastEnforcement = outcome)
+    }
+
     fun recordNoAddress(packageName: String) {
         _state.value = _state.value.copy(
             lastPackage = packageName,
@@ -59,6 +70,7 @@ data class GuardObservation(
     val lastBlocked: Boolean = false,
     val observations: Long = 0,
     val harvests: Long = 0,
+    val lastEnforcement: String = "",
 ) {
     /**
      * The one-line reading of the numbers above, in the terms someone debugging would use.
@@ -69,7 +81,7 @@ data class GuardObservation(
             lastUrl.isBlank() -> "Seeing $lastPackage, but no web address on screen."
             harvests == 0L -> "Reading the address, but no page text has come back yet."
             lastHarvestChars == 0 -> "Address seen, but the page exposed no readable text."
-            lastBlocked -> "Last page was blocked."
+            lastBlocked -> "Last page was blocked. " + lastEnforcement.ifBlank { "" }
             lastTopCategory.isBlank() -> "Read $lastHarvestChars characters. Nothing matched."
             else -> "Read $lastHarvestChars characters. Closest: $lastTopCategory " +
                 "at ${(lastConfidence * 100).toInt()}%."

@@ -290,6 +290,7 @@ other browser, come back, and read it:
 | *page exposed no readable text* | Zero characters harvested. | Tell me the browser and Android version. |
 | *Read N characters. Nothing matched.* | It read the page; the words are not in the lexicon. | Tell me the site and I will extend it. |
 | *Closest: Adult at 45%* | It read the page and scored it below your threshold. | Set that category to **Cautious** in Rules. |
+| *Last page was blocked* + *could not show a block screen* | It judged correctly but could not put anything on screen. | Tell me your Android version. |
 
 If nothing else works, add the site under **Never reach**, which needs no classifier at
 all and is enforced by DNS as well as the guard.

@@ -425,6 +425,8 @@ fun SettingsScreen() {
                     if (observation.lastTopCategory.isBlank()) "none"
                     else "${observation.lastTopCategory} ${(observation.lastConfidence * 100).toInt()}%",
                 )
+                Spacer(Modifier.height(6.dp))
+                StatRow("Last block attempt", observation.lastEnforcement.ifBlank { "—" })
                 Spacer(Modifier.height(14.dp))
                 Text(
                     text = "Open the page in the other browser, then come back here. " +

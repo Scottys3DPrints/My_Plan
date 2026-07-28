@@ -9,11 +9,18 @@ import android.text.TextUtils
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.aegis.app.block.BlockActivity
+import com.aegis.app.block.BlockOverlay
 import com.aegis.app.engine.AegisEngine
 import com.aegis.core.model.Category
 import com.aegis.core.model.RouteContext
 import com.aegis.core.rules.Decision
+import com.aegis.core.budget.GraceClaimResult
+import com.aegis.core.budget.GraceRequestResult
 import com.aegis.core.util.Urls
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * App blocking, time budgets, and the side-door guard (§3.3, §3.4, §3.5).
@@ -46,6 +53,8 @@ import com.aegis.core.util.Urls
 class AegisAccessibilityService : AccessibilityService() {
 
     private lateinit var engine: AegisEngine
+    private var overlay: BlockOverlay? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private var foregroundPackage: String? = null
     private var foregroundSince: Long = 0L
@@ -64,11 +73,14 @@ class AegisAccessibilityService : AccessibilityService() {
         // Resolved here rather than once at install: the user can change launcher at any
         // time, and a stale answer would mean blocking the home screen.
         engine.refreshCriticalPackages()
+        overlay = BlockOverlay(this)
         isConnected = true
     }
 
     override fun onDestroy() {
         flushUsage(SystemClock.elapsedRealtime())
+        overlay?.hide()
+        overlay = null
         isConnected = false
         super.onDestroy()
     }
@@ -362,6 +374,16 @@ class AegisAccessibilityService : AccessibilityService() {
 
     // -------------------------------------------------------------------- blocking act
 
+    /**
+     * Actually stop it.
+     *
+     * The screen is drawn as an accessibility overlay rather than launched as an activity.
+     * An earlier version called `startActivity` here, which Android 10 and later silently
+     * refuse from a service with no visible window — so the page was detected, the block
+     * was written to the record, and nothing whatsoever appeared on screen. Nothing in the
+     * API reports that failure, which is why it looked like the classifier was broken when
+     * the classifier was working perfectly.
+     */
     private fun block(
         packageName: String,
         decision: Decision,
@@ -370,27 +392,74 @@ class AegisAccessibilityService : AccessibilityService() {
     ) {
         // Belt and braces. The engine already refuses to block these, but this is the one
         // code path that can take the screen away from the user, so it checks again here.
-        if (engine.isCritical(packageName)) return
+        if (engine.isCritical(packageName)) {
+            engine.diagnostics.recordEnforcement("skipped — $packageName is protected")
+            return
+        }
 
         val now = SystemClock.elapsedRealtime()
         // An app that relaunches itself would otherwise produce a strobe of block screens.
-        if (target == lastBlockedTarget && now - lastBlockAt < BLOCK_COOLDOWN_MILLIS) return
+        if (target == lastBlockedTarget && now - lastBlockAt < BLOCK_COOLDOWN_MILLIS) {
+            engine.diagnostics.recordEnforcement("skipped — just blocked $target")
+            return
+        }
         lastBlockedTarget = target
         lastBlockAt = now
 
-        // Leave the offending screen first, then explain. The order matters: showing the
-        // explanation over a still-loading page means the page is still there behind it.
+        // Leave the offending screen first, then explain. The order matters: the overlay
+        // is focusable, so a back action issued after it is showing would go to the
+        // overlay rather than to the page underneath.
         performGlobalAction(GLOBAL_ACTION_BACK)
 
-        startActivity(
-            BlockActivity.intentFor(
-                context = this,
-                decision = decision,
-                target = target,
-                blockedPackage = packageName,
-                logEntryId = logEntryId,
-            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
-        )
+        val graceKey = decision.graceKey
+        val grace = if (decision.graceTapAvailable && graceKey != null) {
+            BlockOverlay.GraceActions(
+                tapsRemaining = engine.graceTapsRemaining(),
+                pauseSeconds = 60,
+                onRequest = { scope.launch { engine.requestGraceTap(graceKey) } },
+                onClaim = { scope.launch { engine.claimGraceTap(graceKey) } },
+            )
+        } else {
+            null
+        }
+
+        val shown = overlay?.show(
+            decision = decision,
+            target = target,
+            onClose = { performGlobalAction(GLOBAL_ACTION_HOME) },
+            onMarkedWrong = logEntryId?.let { id ->
+                {
+                    scope.launch {
+                        engine.log.value.entries.firstOrNull { it.id == id }?.let { entry ->
+                            engine.correct(entry, com.aegis.core.log.Correction.FALSE_POSITIVE)
+                        }
+                    }
+                }
+            },
+            grace = grace,
+        ) ?: false
+
+        if (shown) {
+            engine.diagnostics.recordEnforcement("blocked $target")
+            return
+        }
+
+        // The overlay could not be attached. Try the activity anyway — on older releases
+        // it still works, and a screen that might appear beats one that certainly will not.
+        engine.diagnostics.recordEnforcement("overlay refused; falling back for $target")
+        try {
+            startActivity(
+                BlockActivity.intentFor(
+                    context = this,
+                    decision = decision,
+                    target = target,
+                    blockedPackage = packageName,
+                    logEntryId = logEntryId,
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+            )
+        } catch (error: Exception) {
+            engine.diagnostics.recordEnforcement("could not show a block screen for $target")
+        }
     }
 
     companion object {
