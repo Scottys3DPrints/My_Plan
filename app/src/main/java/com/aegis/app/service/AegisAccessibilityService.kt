@@ -8,6 +8,7 @@ import android.provider.Settings
 import android.text.TextUtils
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import com.aegis.app.block.BlockActivity
 import com.aegis.app.block.BlockOverlay
 import com.aegis.app.engine.AegisEngine
@@ -62,9 +63,20 @@ class AegisAccessibilityService : AccessibilityService() {
     private var foregroundSince: Long = 0L
 
     private var lastUrlScanAt: Long = 0L
-    private var lastHarvestedUrl: String? = null
     private var lastHarvestAt: Long = 0L
-    private var harvestAttempts: Int = 0
+    /**
+     * A cheap fingerprint of the page text that was last put through the classifier.
+     *
+     * Judging used to be gated on a timer: read the page, and then refuse to look again for
+     * six seconds. On a results page or an endless feed that is exactly wrong — the address
+     * never changes, so the text that appears after the first read was never judged at all
+     * until the timer expired, which is what made blocking feel late and hit-and-miss.
+     *
+     * Changed text is judged at once; unchanged text costs nothing. The timer below is only
+     * a backstop, so a page still gets re-judged after the rules themselves change.
+     */
+    private var lastJudgedFingerprint: Int = 0
+    private var lastJudgedAt: Long = 0L
     private var lastWindowTitle: String = ""
     private var lastBlockedTarget: String? = null
     private var lastBlockAt: Long = 0L
@@ -105,6 +117,11 @@ class AegisAccessibilityService : AccessibilityService() {
                 rememberWindowTitle(event)
                 onForegroundChanged(packageName)
                 checkForegroundApp(packageName)
+                // A new window is a new page until proven otherwise. Clearing the
+                // fingerprint means the very first readable text gets judged straight
+                // away rather than waiting for the next difference.
+                lastJudgedFingerprint = 0
+                lastUrlScanAt = 0L
                 scanForBlockedAddress(packageName)
             }
 
@@ -198,11 +215,7 @@ class AegisAccessibilityService : AccessibilityService() {
      * The page belongs to the window it was read from. Take the package from there.
      */
     private fun scanForBlockedAddress(eventPackage: String) {
-        val root = try {
-            rootInActiveWindow
-        } catch (error: Exception) {
-            null
-        } ?: return
+        val root = activeRoot() ?: return
 
         try {
             val packageName = root.packageName?.toString()?.takeIf { it.isNotBlank() }
@@ -251,30 +264,37 @@ class AegisAccessibilityService : AccessibilityService() {
                 return
             }
 
-            // 2. The page itself. Expensive, so it runs when the address changes or after
-            //    a pause — pages fill in progressively, and the first tree after
-            //    navigation is often still empty.
+            // 2. The page itself.
             val now = SystemClock.elapsedRealtime()
-            if (url != lastHarvestedUrl) {
-                lastHarvestedUrl = url
-                harvestAttempts = 0
-                lastHarvestAt = 0L
-            }
-            if (lastHarvestAt != 0L && now - lastHarvestAt < CONTENT_RESCAN_MILLIS) return
+            if (now - lastHarvestAt < HARVEST_INTERVAL_MILLIS) return
+            lastHarvestAt = now
 
-            val text = harvestVisibleText(root)
+            // Read the web content, not the browser. Walking from the window root spends
+            // the node budget on the tab strip, the toolbar and the menus before it ever
+            // reaches a paragraph, so on a busy results page the walk could run out
+            // before seeing anything worth judging. Starting at the content node spends
+            // every node on the page.
+            val content = findWebContent(root) ?: root
+            titleFromWebContent(content)?.let { lastWindowTitle = it }
+            val text = harvestVisibleText(content)
 
-            // A page fills in after it loads, and Chrome rebuilds its accessibility tree
-            // lazily, so the first walk after navigation is routinely almost empty. Do not
-            // treat that as the answer — keep looking for a few more passes rather than
-            // marking the page judged and waiting out the timer on nothing.
+            // Chrome builds its accessibility tree lazily, so the first walk after a
+            // navigation is routinely almost empty. That is not an answer — just come
+            // back on the next tick.
             if (text.length < MIN_TEXT_TO_JUDGE) {
                 engine.diagnostics.recordHarvest(text.length, "", 0f, blocked = false)
-                harvestAttempts++
-                if (harvestAttempts >= MAX_HARVEST_ATTEMPTS) lastHarvestAt = now
                 return
             }
-            lastHarvestAt = now
+
+            // The heart of it: judge when what is on screen has actually changed, rather
+            // than on a clock. Scrolling a feed, a results page filling in, a tap that
+            // swaps the content without touching the address — all of those change the
+            // text and none of them change the URL.
+            val fingerprint = text.hashCode() * 31 + text.length
+            val stale = now - lastJudgedAt >= REJUDGE_INTERVAL_MILLIS
+            if (fingerprint == lastJudgedFingerprint && !stale) return
+            lastJudgedFingerprint = fingerprint
+            lastJudgedAt = now
 
             val byContent = engine.evaluateForeignPage(url, lastWindowTitle, text, route)
             val top = byContent.classification.topCategory
@@ -315,6 +335,86 @@ class AegisAccessibilityService : AccessibilityService() {
      * it on the next scan a second later usually is not, because the bounds are generous
      * enough that the visible screen fits inside them.
      */
+    /**
+     * The window to judge, which is not always the one Android hands over first.
+     *
+     * `rootInActiveWindow` is null more often than it looks: while a soft keyboard is up,
+     * while the notification shade is being dragged, and in the gap during a window
+     * transition. Every one of those returned early and skipped the scan entirely, which
+     * is a large part of why blocking felt intermittent — the guard was not deciding
+     * "allowed", it was not looking at all.
+     *
+     * When it comes back empty, fall back to the window list and take the frontmost
+     * application window. Deliberately only a fallback: preferring the window list
+     * outright risks judging a browser sitting behind whatever the user actually opened.
+     */
+    private fun activeRoot(): AccessibilityNodeInfo? {
+        val direct = try {
+            rootInActiveWindow
+        } catch (error: Exception) {
+            null
+        }
+        if (direct != null) return direct
+
+        return try {
+            windows
+                .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+                .sortedByDescending { it.isActive || it.isFocused }
+                .firstNotNullOfOrNull { it.root }
+        } catch (error: Exception) {
+            null
+        }
+    }
+
+    /**
+     * The node the page itself lives under.
+     *
+     * Chromium browsers expose the rendered document beneath a node reported as a
+     * `WebView`, with the browser's own furniture — tabs, toolbar, omnibox, menus —
+     * outside it. Finding that node and harvesting from there is the difference between
+     * spending six hundred node reads on chrome and spending them on content.
+     */
+    private fun findWebContent(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
+        queue.add(root to 0)
+        var visited = 0
+
+        while (queue.isNotEmpty() && visited < MAX_CONTENT_PROBE_NODES) {
+            val (node, depth) = queue.removeFirst()
+            visited++
+
+            val className = node.className?.toString()
+            if (className != null && className.endsWith("WebView")) return node
+
+            if (depth < MAX_CONTENT_PROBE_DEPTH) {
+                for (index in 0 until node.childCount) {
+                    val child = try {
+                        node.getChild(index)
+                    } catch (error: Exception) {
+                        null
+                    } ?: continue
+                    queue.add(child to depth + 1)
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * The page title, taken from the content node.
+     *
+     * Worth having its own path because the window-title event is unreliable: browsers
+     * announce their own name before the page settles, and on a tab switch often announce
+     * nothing at all. A stale title fed to the classifier is worse than none — the title
+     * is heavily weighted, so the wrong one drags the verdict toward the previous page.
+     */
+    private fun titleFromWebContent(content: AccessibilityNodeInfo): String? {
+        val announced = (content.text ?: content.contentDescription)?.toString()?.trim()
+        if (announced.isNullOrBlank() || announced.length > MAX_TITLE_LENGTH) return null
+        if (announced.equals("Chrome", ignoreCase = true)) return null
+        return announced
+    }
+
     private fun harvestVisibleText(root: AccessibilityNodeInfo): String {
         val builder = StringBuilder()
         val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
@@ -483,15 +583,6 @@ class AegisAccessibilityService : AccessibilityService() {
             decision = decision,
             target = target,
             onClose = { performGlobalAction(GLOBAL_ACTION_HOME) },
-            onMarkedWrong = logEntryId?.let { id ->
-                {
-                    scope.launch {
-                        engine.log.value.entries.firstOrNull { it.id == id }?.let { entry ->
-                            engine.correct(entry, com.aegis.core.log.Correction.FALSE_POSITIVE)
-                        }
-                    }
-                }
-            },
             grace = grace,
         ) ?: false
 
@@ -541,7 +632,6 @@ class AegisAccessibilityService : AccessibilityService() {
             ),
             target = "test",
             onClose = { },
-            onMarkedWrong = null,
             grace = null,
         )
         return if (shown) "" else overlay.lastError.ifBlank { "The overlay was refused." }
@@ -555,7 +645,19 @@ class AegisAccessibilityService : AccessibilityService() {
         @Volatile
         var isConnected: Boolean = false
 
-        private const val URL_SCAN_INTERVAL_MILLIS = 1_000L
+        /**
+         * How often a content event is allowed to trigger a look at the address.
+         *
+         * Was a full second, which on its own put up to a second between a page appearing
+         * and the guard noticing. The address check is an indexed view-id lookup — one of
+         * the cheapest things a service can do — so it does not need to be rationed that
+         * hard, and the expensive part downstream has its own, separate interval.
+         */
+        private const val URL_SCAN_INTERVAL_MILLIS = 300L
+
+        /** The floor between two walks of the page. This is the part that costs anything. */
+        private const val HARVEST_INTERVAL_MILLIS = 600L
+
         private const val BLOCK_COOLDOWN_MILLIS = 2_500L
         private const val MAX_NODES_SCANNED = 220
         private const val MAX_SCAN_DEPTH = 14
@@ -565,7 +667,7 @@ class AegisAccessibilityService : AccessibilityService() {
          * Bounds on reading a foreign page. Generous enough that a screenful of article
          * text fits, tight enough that the walk stays well under a frame.
          */
-        private const val MAX_HARVEST_NODES = 600
+        private const val MAX_HARVEST_NODES = 900
         private const val MAX_HARVEST_DEPTH = 32
         private const val MAX_HARVEST_CHARS = 6_000
 
@@ -574,11 +676,18 @@ class AegisAccessibilityService : AccessibilityService() {
         /** Below this there is not enough to judge, and guessing would misfire. */
         private const val MIN_TEXT_TO_JUDGE = 80
 
-        /** How long before the same address is read again, once it has been judged. */
-        private const val CONTENT_RESCAN_MILLIS = 6_000L
+        /**
+         * How long before text that has not changed is put through the classifier again.
+         *
+         * Only a backstop. Unchanged text gives an unchanged verdict, so re-running it is
+         * wasted work — except after the rules themselves change, which this catches
+         * without the guard having to be told about it.
+         */
+        private const val REJUDGE_INTERVAL_MILLIS = 15_000L
 
-        /** Passes to allow on a page that keeps coming back empty before giving it a rest. */
-        private const val MAX_HARVEST_ATTEMPTS = 8
+        /** Bounds on the hunt for the page's own node, before any text is read. */
+        private const val MAX_CONTENT_PROBE_NODES = 400
+        private const val MAX_CONTENT_PROBE_DEPTH = 14
 
         /** Address-bar view ids for the browsers most people actually have installed. */
         private val KNOWN_BROWSER_VIEW_IDS = mapOf(

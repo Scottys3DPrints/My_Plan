@@ -280,4 +280,43 @@ class LexicalClassifierTest {
         )
         assertTrue(result.score(Category.ADULT) > 0.4f)
     }
+
+    @Test
+    fun `a search query in the url is read as words, not as one token`() {
+        // Search is how most of this is actually reached, and a search URL carries the
+        // query as "?q=two+words". Before the separator was split on, the entire query
+        // arrived as a single token that matched nothing — so a results page was judged
+        // as if the address said nothing at all.
+        val result = classifier.classify(
+            ContentInput(
+                url = "https://search.example/results?q=free+porn+videos",
+            ),
+        )
+
+        assertTrue(
+            result.score(Category.ADULT) > 0f,
+            "expected the query terms to count, got ${result.score(Category.ADULT)}",
+        )
+    }
+
+    @Test
+    fun `a percent-encoded space in a query is a separator too`() {
+        val result = classifier.classify(
+            ContentInput(url = "https://search.example/results?q=adult%20film%20star"),
+        )
+
+        assertTrue(
+            result.score(Category.ADULT) > 0f,
+            "expected the encoded query to count, got ${result.score(Category.ADULT)}",
+        )
+    }
+
+    @Test
+    fun `splitting the query does not invent a verdict for an ordinary search`() {
+        val result = classifier.classify(
+            ContentInput(url = "https://search.example/results?q=how+to+poach+an+egg"),
+        )
+
+        assertEquals(0f, result.score(Category.ADULT))
+    }
 }

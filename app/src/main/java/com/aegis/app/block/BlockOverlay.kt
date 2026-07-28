@@ -92,13 +92,12 @@ class BlockOverlay(private val service: AccessibilityService) {
         decision: Decision,
         target: String,
         onClose: () -> Unit,
-        onMarkedWrong: (() -> Unit)?,
         grace: GraceActions?,
     ): Boolean {
         hide()
 
         return try {
-            val view = buildView(decision, target, onClose, onMarkedWrong, grace)
+            val view = buildView(decision, target, onClose, grace)
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -147,7 +146,6 @@ class BlockOverlay(private val service: AccessibilityService) {
         decision: Decision,
         target: String,
         onClose: () -> Unit,
-        onMarkedWrong: (() -> Unit)?,
         grace: GraceActions?,
     ): View {
         val scroll = ScrollView(overlayContext).apply {
@@ -233,16 +231,19 @@ class BlockOverlay(private val service: AccessibilityService) {
         }
         column.addView(close)
 
-        if (onMarkedWrong != null) {
-            val wrong = button("This was wrong", outlined = true)
-            wrong.setOnClickListener {
-                wrong.isEnabled = false
-                wrong.text = "Noted — Aegis has adjusted"
-                onMarkedWrong()
-            }
-            column.addView(spacer(8))
-            column.addView(wrong)
-        }
+        // No "this was wrong" here, deliberately. Retraining the classifier is a change to
+        // the rules, and the moment you are staring at a block is the worst moment to make
+        // one — that is the whole premise of the cooling-off period, and a button that
+        // weakens the filter in one tap, right at the point of wanting, undoes it. The
+        // block is already in the Record; correct it there, later, calmly.
+        column.addView(spacer(10))
+        column.addView(
+            text(
+                "Think this was wrong? It's in the Record — correct it in Aegis.",
+                sizeSp = 12f,
+                color = ASH,
+            ),
+        )
 
         scroll.addView(column)
         return scroll

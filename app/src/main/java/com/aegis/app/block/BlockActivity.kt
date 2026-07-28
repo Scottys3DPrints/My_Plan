@@ -22,7 +22,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,7 +44,6 @@ import com.aegis.app.ui.theme.Evidence
 import com.aegis.app.ui.theme.Rust
 import com.aegis.core.budget.GraceClaimResult
 import com.aegis.core.budget.GraceRequestResult
-import com.aegis.core.log.Correction
 import com.aegis.core.rules.Decision
 import com.aegis.core.util.LocalTime
 import kotlinx.coroutines.delay
@@ -65,10 +63,11 @@ import kotlinx.serialization.json.Json
  *    and the route it came in by.
  * 3. **Show its working.** The matched terms, set in the evidence face, so a fair block
  *    and a misfire look different from each other.
- * 4. **Offer only honest exits.** A correction if the classifier was wrong, and a grace
- *    tap where one applies — priced in a minute of sitting here, drawn as the same closing
- *    arc used by the seal. There is no "continue anyway" on a walled category, and that
- *    absence is the product.
+ * 4. **Offer only honest exits.** A grace tap where one applies — priced in a minute of
+ *    sitting here, drawn as the same closing arc used by the seal. There is no "continue
+ *    anyway" on a walled category, and that absence is the product. Correcting the
+ *    classifier is deliberately *not* offered here either: it is a lasting loosening of
+ *    the filter, and this is the worst moment anyone could choose to make one.
  */
 class BlockActivity : ComponentActivity() {
 
@@ -153,7 +152,6 @@ private fun BlockScreen(
     val scope = rememberCoroutineScope()
 
     var graceState by remember { mutableStateOf<GraceState>(GraceState.Idle) }
-    var corrected by remember { mutableStateOf(false) }
     var pauseSeconds by remember { mutableStateOf(60) }
 
     // The countdown is the feature. The point is to still be here, watching it, once the
@@ -303,25 +301,18 @@ private fun BlockScreen(
             Text("Close")
         }
 
+        // Correcting the classifier used to be a button right here, and it should not have
+        // been. Marking a block wrong damps the words that caused it — a real, lasting
+        // loosening of the filter — and offering that in the one second you most want the
+        // page is offering an exit dressed as feedback. Everything else in Aegis makes
+        // loosening wait; this did not. The block is in the Record either way.
         if (logEntryId != null && decision.category != null) {
-            TextButton(
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !corrected,
-                onClick = {
-                    scope.launch {
-                        val entry = engine.log.value.entries.firstOrNull { it.id == logEntryId }
-                        if (entry != null) {
-                            engine.correct(entry, Correction.FALSE_POSITIVE)
-                            corrected = true
-                        }
-                    }
-                },
-            ) {
-                Text(
-                    text = if (corrected) "Noted — Aegis has adjusted" else "This was wrong",
-                    color = Ash,
-                )
-            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "Think this was wrong? It's in the Record — correct it there.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Ash,
+            )
         }
     }
 }

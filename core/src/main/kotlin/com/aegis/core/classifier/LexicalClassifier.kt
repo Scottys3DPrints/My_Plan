@@ -50,7 +50,15 @@ class LexicalClassifier(
         val metaText = normalise(input.metaKeywords.joinToString(" "))
         val metaTokens = tokenise(metaText).toSet()
 
-        val pathText = normalise(pathAndQueryOf(input.url).replace(Regex("[/_\\-?=&.]"), " "))
+        // '+' and '%20' belong in this list: a search URL carries the query as
+        // "?q=two+words", and without splitting on the separator the whole query arrives
+        // as a single unmatched token. Search is how most of this content is actually
+        // reached, so losing the query loses the clearest signal on the page.
+        val pathText = normalise(
+            pathAndQueryOf(input.url)
+                .replace("%20", " ")
+                .replace(Regex("[/_\\-?=&.+]"), " "),
+        )
         val pathTokens = tokenise(pathText).toSet()
 
         val altText = normalise(input.imageSignals.joinToString(" ") { it.describedBy })
