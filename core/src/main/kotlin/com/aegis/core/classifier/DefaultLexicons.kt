@@ -31,6 +31,14 @@ object DefaultLexicons {
             t("adult videos", 0.9f), t("erotic", 0.6f), t("erotica", 0.6f),
             t("fetish", 0.6f), t("strip club", 0.6f), t("brothel", 0.7f),
             t("18+ only", 0.6f), t("uncensored", 0.4f), t("full length scenes", 0.7f),
+            // How search results and profile pages describe this material, as opposed to
+            // how the material describes itself. Searching a performer's name returns a
+            // page full of these and none of the terms above — which is exactly the case
+            // that was slipping through.
+            t("pornstar", 1.1f), t("porn star", 1.1f), t("adult film", 0.9f),
+            t("adult actress", 1.0f), t("adult performer", 1.0f), t("adult star", 0.9f),
+            t("sex tape", 1.0f), t("nude scenes", 0.9f), t("explicit photos", 0.9f),
+            t("cam model", 0.9f), t("adult industry", 0.6f), t("xxx videos", 1.1f),
         ),
         dampeners = listOf(
             t("sex education", 1.2f), t("sexual health", 1.2f), t("sexually transmitted", 1.0f),

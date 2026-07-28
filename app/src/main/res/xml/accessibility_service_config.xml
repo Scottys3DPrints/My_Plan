@@ -1,16 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Scoped as narrowly as the job allows.
+  Scoped as narrowly as the job allows, with one exception that has to be argued for.
 
-  canRetrieveWindowContent is required to read the address bar of another browser, which
-  is what closes the "you deleted the app but its in-app browser still opens the site"
-  side door (§3.5). It is a powerful permission and the app says so in plain words on the
-  screen that asks for it, rather than burying it.
+  canRetrieveWindowContent is required to read the address bar and page text of another
+  browser, which is what closes the "you deleted the app but its in-app browser still
+  opens the site" side door and what lets Aegis judge a page in Chrome on its content
+  rather than its name.
+
+  flagIncludeNotImportantViews is the exception, and it is not optional. Chrome marks
+  large parts of rendered web content as "not important for accessibility" — a reasonable
+  default for a screen reader, which wants headings and links rather than every wrapper.
+  Without this flag those nodes simply do not exist as far as this service is concerned,
+  so a walk of a search results page returns the toolbar and almost nothing else. That is
+  precisely the bug where Chrome silently failed to block what the built-in browser caught.
+
+  typeViewScrolled is here because a page's content arrives as it is scrolled: the first
+  tree after navigation is often nearly empty, and without this the only chances to look
+  are the load event and a six-second timer.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewScrolled"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
     android:canRetrieveWindowContent="true"
     android:description="@string/accessibility_service_description"
     android:notificationTimeout="200" />

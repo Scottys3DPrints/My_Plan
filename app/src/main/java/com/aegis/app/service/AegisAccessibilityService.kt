@@ -53,6 +53,7 @@ class AegisAccessibilityService : AccessibilityService() {
     private var lastUrlScanAt: Long = 0L
     private var lastHarvestedUrl: String? = null
     private var lastHarvestAt: Long = 0L
+    private var harvestAttempts: Int = 0
     private var lastWindowTitle: String = ""
     private var lastBlockedTarget: String? = null
     private var lastBlockAt: Long = 0L
@@ -91,6 +92,7 @@ class AegisAccessibilityService : AccessibilityService() {
                 scanForBlockedAddress(packageName)
             }
 
+            AccessibilityEvent.TYPE_VIEW_SCROLLED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 // Content changes fire constantly; a URL check on every one would be a
                 // battery bug. Once a second is enough to catch a navigation.
@@ -171,10 +173,21 @@ class AegisAccessibilityService : AccessibilityService() {
 
         try {
             val url = addressFromKnownBrowser(root, packageName) ?: addressFromAnyTextNode(root)
-            if (url.isNullOrBlank()) return
+            if (url.isNullOrBlank()) {
+                engine.diagnostics.recordNoAddress(packageName)
+                return
+            }
 
             val host = Urls.host(url)
-            if (host.isEmpty()) return
+            // While the omnibox has focus its text is whatever is being typed, not an
+            // address. Treating "eva elfie" as a hostname is harmless but it poisons the
+            // change-detection below, so a value that cannot be a host is discarded.
+            if (host.isEmpty() || !host.contains('.') || host.contains(' ')) {
+                engine.diagnostics.recordNoAddress(packageName)
+                return
+            }
+
+            engine.diagnostics.recordAddress(packageName, url)
 
             val route = if (packageName in KNOWN_BROWSER_VIEW_IDS.keys) {
                 RouteContext.REDIRECT
@@ -194,15 +207,35 @@ class AegisAccessibilityService : AccessibilityService() {
             //    a pause — pages fill in progressively, and the first tree after
             //    navigation is often still empty.
             val now = SystemClock.elapsedRealtime()
-            val addressChanged = url != lastHarvestedUrl
-            if (!addressChanged && now - lastHarvestAt < CONTENT_RESCAN_MILLIS) return
-            lastHarvestedUrl = url
-            lastHarvestAt = now
+            if (url != lastHarvestedUrl) {
+                lastHarvestedUrl = url
+                harvestAttempts = 0
+                lastHarvestAt = 0L
+            }
+            if (lastHarvestAt != 0L && now - lastHarvestAt < CONTENT_RESCAN_MILLIS) return
 
             val text = harvestVisibleText(root)
-            if (text.length < MIN_TEXT_TO_JUDGE) return
+
+            // A page fills in after it loads, and Chrome rebuilds its accessibility tree
+            // lazily, so the first walk after navigation is routinely almost empty. Do not
+            // treat that as the answer — keep looking for a few more passes rather than
+            // marking the page judged and waiting out the timer on nothing.
+            if (text.length < MIN_TEXT_TO_JUDGE) {
+                engine.diagnostics.recordHarvest(text.length, "", 0f, blocked = false)
+                harvestAttempts++
+                if (harvestAttempts >= MAX_HARVEST_ATTEMPTS) lastHarvestAt = now
+                return
+            }
+            lastHarvestAt = now
 
             val byContent = engine.evaluateForeignPage(url, lastWindowTitle, text, route)
+            val top = byContent.classification.topCategory
+            engine.diagnostics.recordHarvest(
+                characters = text.length,
+                topCategory = top?.label.orEmpty(),
+                confidence = top?.let { byContent.classification.score(it) } ?: 0f,
+                blocked = byContent.decision.isBlocked,
+            )
             // Only a block acts here. A warning would mean throwing an interstitial over
             // somebody else's browser, which is both ugly and easy to get wrong.
             if (byContent.decision.isBlocked) {
@@ -383,8 +416,11 @@ class AegisAccessibilityService : AccessibilityService() {
         /** Below this there is not enough to judge, and guessing would misfire. */
         private const val MIN_TEXT_TO_JUDGE = 80
 
-        /** How long before the same address is read again, for pages that load late. */
+        /** How long before the same address is read again, once it has been judged. */
         private const val CONTENT_RESCAN_MILLIS = 6_000L
+
+        /** Passes to allow on a page that keeps coming back empty before giving it a rest. */
+        private const val MAX_HARVEST_ATTEMPTS = 8
 
         /** Address-bar view ids for the browsers most people actually have installed. */
         private val KNOWN_BROWSER_VIEW_IDS = mapOf(

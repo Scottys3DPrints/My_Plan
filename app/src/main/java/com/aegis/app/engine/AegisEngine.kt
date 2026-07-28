@@ -102,6 +102,9 @@ class AegisEngine private constructor(context: Context) {
     /** True while the user is still setting up and edits apply instantly. */
     val isArmed: Boolean get() = _rules.value.armed
 
+    /** What the accessibility guard last observed. See [GuardDiagnostics]. */
+    val diagnostics = GuardDiagnostics()
+
     /** Queued changes waiting on a particular control, for inline display. */
     fun pendingFor(targetKey: String): PendingChange? =
         _pending.value.firstOrNull { targetKey in it.targetKeys }

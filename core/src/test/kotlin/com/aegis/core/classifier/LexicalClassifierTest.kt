@@ -94,6 +94,45 @@ class LexicalClassifierTest {
     }
 
     @Test
+    fun `a search for a performer's name is caught by how the results describe her`() {
+        // The reported case. The name itself is in no lexicon and never will be — names
+        // are unbounded. What is bounded is the vocabulary a results page uses about them.
+        val results = classifier.classify(
+            ContentInput(
+                url = "https://duckduckgo.com/?q=eva+elfie",
+                title = "eva elfie at DuckDuckGo",
+                text = "Eva Elfie — Wikipedia. Russian adult film actress and model. " +
+                    "Eva Elfie videos and photos. Adult actress profile. Watch full length " +
+                    "scenes. Eva Elfie OnlyFans leaked photos. Pornstar biography, age, " +
+                    "measurements. More adult videos from this performer.",
+            ),
+        )
+
+        assertTrue(
+            results.score(Category.ADULT) > 0.6f,
+            "search results for a performer scored ${results.score(Category.ADULT)}",
+        )
+    }
+
+    @Test
+    fun `an actor's ordinary filmography is not treated as adult`() {
+        // The guard on the terms above: "film" and "star" are everywhere in film writing.
+        val result = classifier.classify(
+            ContentInput(
+                url = "https://en.wikipedia.example/wiki/Actor",
+                title = "Film actress — Wikipedia",
+                text = "She is a film actress and producer known for her leading roles. " +
+                    "She won an award for best actress and starred in several features.",
+            ),
+        )
+
+        assertTrue(
+            result.score(Category.ADULT) < 0.35f,
+            "ordinary film writing scored ${result.score(Category.ADULT)}",
+        )
+    }
+
+    @Test
     fun `hostname morphemes do not fire inside ordinary words`() {
         // The reason "anal" and "tits" are not in the lexicon. A filter that blocks an
         // analytics CDN teaches the user to distrust every block it makes.

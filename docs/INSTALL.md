@@ -280,8 +280,20 @@ sensitivity to Cautious if things are getting through.
 
 ### If something still gets through
 
-1. Confirm the **app & route guard** is on (Home screen). Layer 3 needs it.
-2. Open **Record** — if the page is listed as *Warned*, it was seen but scored below your
-   threshold. Set that category to **Cautious** in Rules.
-3. If it is not listed at all, the page text was not exposed. Add the site under
-   **Never reach**, which needs no classifier at all.
+**Settings → Diagnostics** shows exactly what the guard last saw. Open the page in the
+other browser, come back, and read it:
+
+| What it says | What it means | What to do |
+|---|---|---|
+| *has not seen anything* | The guard is off. | Turn it on from the Home screen. |
+| *no web address on screen* | It cannot find the address bar. | Tell me which browser — its address bar needs adding. |
+| *page exposed no readable text* | Zero characters harvested. | Tell me the browser and Android version. |
+| *Read N characters. Nothing matched.* | It read the page; the words are not in the lexicon. | Tell me the site and I will extend it. |
+| *Closest: Adult at 45%* | It read the page and scored it below your threshold. | Set that category to **Cautious** in Rules. |
+
+If nothing else works, add the site under **Never reach**, which needs no classifier at
+all and is enforced by DNS as well as the guard.
+
+**Note:** the guard must be re-enabled in Android's Accessibility settings after an
+update that changes what it asks for. Toggle it off and on if diagnostics say it is not
+seeing anything.

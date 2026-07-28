@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aegis.app.BuildConfig
 import com.aegis.app.engine.AegisEngine
+import com.aegis.app.service.AegisAccessibilityService
 import com.aegis.app.update.UpdateCheck
 import com.aegis.app.update.Updater
 import com.aegis.app.ui.components.Eyebrow
@@ -390,6 +391,48 @@ fun SettingsScreen() {
                         },
                     )
                 }
+            }
+        }
+
+        item {
+            SectionHeader(
+                eyebrow = "Diagnostics",
+                title = "What the guard is seeing",
+                subtitle = "If a site is not being blocked in another browser, this says why.",
+            )
+        }
+
+        item {
+            val observation by engine.diagnostics.state.collectAsState()
+            val guardOn = remember { AegisAccessibilityService.isConnected }
+
+            Panel {
+                Text(observation.summary, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(14.dp))
+                StatRow("Guard running", if (guardOn) "yes" else "no")
+                Spacer(Modifier.height(6.dp))
+                StatRow("Last app", observation.lastPackage.ifBlank { "—" })
+                Spacer(Modifier.height(6.dp))
+                StatRow(
+                    "Last address",
+                    observation.lastUrl.ifBlank { "—" }.take(40),
+                )
+                Spacer(Modifier.height(6.dp))
+                StatRow("Page text read", "${observation.lastHarvestChars} chars")
+                Spacer(Modifier.height(6.dp))
+                StatRow(
+                    "Closest match",
+                    if (observation.lastTopCategory.isBlank()) "none"
+                    else "${observation.lastTopCategory} ${(observation.lastConfidence * 100).toInt()}%",
+                )
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = "Open the page in the other browser, then come back here. " +
+                        "Zero characters means the page exposed nothing readable. A match " +
+                        "below your threshold means the category needs Cautious sensitivity.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Ash,
+                )
             }
         }
 
