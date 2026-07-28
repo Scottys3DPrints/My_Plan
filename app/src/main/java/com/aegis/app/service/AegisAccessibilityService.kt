@@ -13,7 +13,9 @@ import com.aegis.app.block.BlockOverlay
 import com.aegis.app.engine.AegisEngine
 import com.aegis.core.model.Category
 import com.aegis.core.model.RouteContext
+import com.aegis.core.rules.BlockCause
 import com.aegis.core.rules.Decision
+import com.aegis.core.rules.Outcome
 import com.aegis.core.budget.GraceClaimResult
 import com.aegis.core.budget.GraceRequestResult
 import com.aegis.core.util.Urls
@@ -74,6 +76,7 @@ class AegisAccessibilityService : AccessibilityService() {
         // time, and a stale answer would mean blocking the home screen.
         engine.refreshCriticalPackages()
         overlay = BlockOverlay(this)
+        running = this
         isConnected = true
     }
 
@@ -81,6 +84,7 @@ class AegisAccessibilityService : AccessibilityService() {
         flushUsage(SystemClock.elapsedRealtime())
         overlay?.hide()
         overlay = null
+        running = null
         isConnected = false
         super.onDestroy()
     }
@@ -423,7 +427,8 @@ class AegisAccessibilityService : AccessibilityService() {
             null
         }
 
-        val shown = overlay?.show(
+        val activeOverlay = overlay
+        val shown = activeOverlay?.show(
             decision = decision,
             target = target,
             onClose = { performGlobalAction(GLOBAL_ACTION_HOME) },
@@ -446,7 +451,9 @@ class AegisAccessibilityService : AccessibilityService() {
 
         // The overlay could not be attached. Try the activity anyway — on older releases
         // it still works, and a screen that might appear beats one that certainly will not.
-        engine.diagnostics.recordEnforcement("overlay refused; falling back for $target")
+        engine.diagnostics.recordEnforcement(
+            "overlay refused (" + (activeOverlay?.lastError ?: "no overlay") + ")",
+        )
         try {
             startActivity(
                 BlockActivity.intentFor(
@@ -462,7 +469,38 @@ class AegisAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Show the block screen on demand, with a made-up verdict.
+     *
+     * Exists so the overlay can be tested on its own. "Chrome is not blocking" has meant,
+     * at different times, a blind harvest, a refused activity launch and a rejected window
+     * token — and from the outside all three look identical. One button that proves the
+     * screen can be drawn at all separates "we never detected it" from "we detected it and
+     * could not show you".
+     */
+    fun showTestOverlay(): String {
+        val overlay = this.overlay ?: return "The guard is not running."
+        val shown = overlay.show(
+            decision = Decision(
+                outcome = Outcome.BLOCK,
+                cause = BlockCause.CATEGORY_WALL,
+                explanation = "This is a test. Nothing was actually blocked — if you can " +
+                    "read this, Aegis can put a block screen over other apps.",
+                evidence = listOf("test", "not a real block"),
+            ),
+            target = "test",
+            onClose = { },
+            onMarkedWrong = null,
+            grace = null,
+        )
+        return if (shown) "" else overlay.lastError.ifBlank { "The overlay was refused." }
+    }
+
     companion object {
+        /** Set while the service is running, so the settings screen can reach it. */
+        @Volatile
+        var running: AegisAccessibilityService? = null
+
         @Volatile
         var isConnected: Boolean = false
 

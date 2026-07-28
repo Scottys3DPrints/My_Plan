@@ -1,11 +1,13 @@
 package com.aegis.app.block
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Typeface
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.TypedValue
@@ -46,8 +48,35 @@ import com.aegis.core.rules.Decision
  */
 class BlockOverlay(private val service: AccessibilityService) {
 
+    /**
+     * The context the overlay window is added through.
+     *
+     * Not the service itself. From Android 11 a window may only be added through a context
+     * that has a window token, and a plain service context has none — the request is
+     * rejected with "token null is not valid". That is a `BadTokenException` thrown inside
+     * `addView`, which the previous version caught and reported only as "overlay refused",
+     * so the block screen silently failed to appear on every modern phone and said nothing
+     * about why.
+     */
+    private val overlayContext: Context = try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            service.createWindowContext(
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                null,
+            )
+        } else {
+            service
+        }
+    } catch (error: Exception) {
+        service
+    }
+
     private val windowManager =
-        service.getSystemService(AccessibilityService.WINDOW_SERVICE) as WindowManager
+        overlayContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+
+    /** Why the last attempt failed, for the diagnostics panel. Empty when it succeeded. */
+    var lastError: String = ""
+        private set
 
     private val handler = Handler(Looper.getMainLooper())
     private var root: View? = null
@@ -82,9 +111,14 @@ class BlockOverlay(private val service: AccessibilityService) {
 
             windowManager.addView(view, params)
             root = view
+            lastError = ""
             true
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
+            // Throwable, not Exception: a bad window token arrives as a RuntimeException
+            // subclass but a missing class or method on an unusual build does not, and
+            // failing to show the block screen must never take the guard down with it.
             root = null
+            lastError = error.javaClass.simpleName + ": " + (error.message ?: "no detail")
             false
         }
     }
@@ -116,12 +150,12 @@ class BlockOverlay(private val service: AccessibilityService) {
         onMarkedWrong: (() -> Unit)?,
         grace: GraceActions?,
     ): View {
-        val scroll = ScrollView(service).apply {
+        val scroll = ScrollView(overlayContext).apply {
             setBackgroundColor(OBSIDIAN)
             isFillViewport = true
         }
 
-        val column = LinearLayout(service).apply {
+        val column = LinearLayout(overlayContext).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(28), dp(48), dp(28), dp(48))
@@ -132,7 +166,7 @@ class BlockOverlay(private val service: AccessibilityService) {
         }
 
         column.addView(
-            StruckMark(service),
+            StruckMark(overlayContext),
             LinearLayout.LayoutParams(dp(64), dp(64)),
         )
 
@@ -245,7 +279,7 @@ class BlockOverlay(private val service: AccessibilityService) {
         handler.postDelayed(tick, 1_000)
     }
 
-    private fun spacer(height: Int): View = View(service).apply {
+    private fun spacer(height: Int): View = View(overlayContext).apply {
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             dp(height),
@@ -257,7 +291,7 @@ class BlockOverlay(private val service: AccessibilityService) {
         sizeSp: Float,
         color: Int,
         typeface: Typeface = Typeface.SANS_SERIF,
-    ): TextView = TextView(service).apply {
+    ): TextView = TextView(overlayContext).apply {
         this.text = value
         setTextColor(color)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
@@ -268,7 +302,7 @@ class BlockOverlay(private val service: AccessibilityService) {
         )
     }
 
-    private fun button(label: String, outlined: Boolean): Button = Button(service).apply {
+    private fun button(label: String, outlined: Boolean): Button = Button(overlayContext).apply {
         text = label
         isAllCaps = false
         setTextColor(if (outlined) ASH else OBSIDIAN)

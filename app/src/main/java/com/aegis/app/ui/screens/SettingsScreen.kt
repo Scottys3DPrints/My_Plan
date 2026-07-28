@@ -427,6 +427,27 @@ fun SettingsScreen() {
                 )
                 Spacer(Modifier.height(6.dp))
                 StatRow("Last block attempt", observation.lastEnforcement.ifBlank { "—" })
+                Spacer(Modifier.height(16.dp))
+                var testResult by remember { mutableStateOf("") }
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        val service = AegisAccessibilityService.running
+                        testResult = if (service == null) {
+                            "The guard is not running. Turn it on from the Home screen."
+                        } else {
+                            val error = service.showTestOverlay()
+                            if (error.isBlank()) "" else "Could not draw it — $error"
+                        }
+                    },
+                ) {
+                    Text("Test the block screen")
+                }
+                if (testResult.isNotBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(text = testResult, style = MaterialTheme.typography.bodySmall, color = Ash)
+                }
+
                 Spacer(Modifier.height(14.dp))
                 Text(
                     text = "Open the page in the other browser, then come back here. " +
